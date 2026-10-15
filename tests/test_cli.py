@@ -11,7 +11,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta
 from unittest import mock
 
-from f50_sms import cli
+from f50_sms import cli, output, pager, query
 from f50_sms.client import F50Client
 from f50_sms.errors import (
     F50AuthError,
@@ -150,40 +150,40 @@ class PasswordPromptTests(unittest.TestCase):
 
 class TimeSpecTests(unittest.TestCase):
     def test_absolute_date(self):
-        self.assertEqual(cli.parse_time_spec("2026-10-01"), datetime(2026, 10, 1))
+        self.assertEqual(query.parse_time_spec("2026-10-01"), datetime(2026, 10, 1))
 
     def test_absolute_datetime(self):
-        self.assertEqual(cli.parse_time_spec("2026-10-01 08:30"), datetime(2026, 10, 1, 8, 30))
+        self.assertEqual(query.parse_time_spec("2026-10-01 08:30"), datetime(2026, 10, 1, 8, 30))
 
     def test_relative_days(self):
         now = datetime(2026, 10, 15, 12, 0, 0)
-        self.assertEqual(cli.parse_time_spec("7d", now=now), now - timedelta(days=7))
+        self.assertEqual(query.parse_time_spec("7d", now=now), now - timedelta(days=7))
 
     def test_relative_hours(self):
         now = datetime(2026, 10, 15, 12, 0, 0)
-        self.assertEqual(cli.parse_time_spec("24h", now=now), now - timedelta(hours=24))
+        self.assertEqual(query.parse_time_spec("24h", now=now), now - timedelta(hours=24))
 
     def test_today(self):
         now = datetime(2026, 10, 15, 12, 34, 56)
-        self.assertEqual(cli.parse_time_spec("today", now=now), datetime(2026, 10, 15))
+        self.assertEqual(query.parse_time_spec("today", now=now), datetime(2026, 10, 15))
 
     def test_invalid(self):
         with self.assertRaises(ValueError):
-            cli.parse_time_spec("刚才")
+            query.parse_time_spec("刚才")
 
 
 class TagExpansionTests(unittest.TestCase):
     def test_aliases(self):
-        self.assertEqual(cli.expand_tags(["未读"]), {"1"})
-        self.assertEqual(cli.expand_tags(["unread"]), {"1"})
-        self.assertEqual(cli.expand_tags(["已发送,草稿"]), {"2", "4"})
+        self.assertEqual(query.expand_tags(["未读"]), {"1"})
+        self.assertEqual(query.expand_tags(["unread"]), {"1"})
+        self.assertEqual(query.expand_tags(["已发送,草稿"]), {"2", "4"})
 
     def test_all_means_no_filter(self):
-        self.assertIsNone(cli.expand_tags(["all"]))
+        self.assertIsNone(query.expand_tags(["all"]))
 
     def test_unknown_raises(self):
         with self.assertRaises(Exception):
-            cli.expand_tags(["莫名其妙"])
+            query.expand_tags(["莫名其妙"])
 
 
 class LabelTests(unittest.TestCase):
@@ -191,10 +191,10 @@ class LabelTests(unittest.TestCase):
         self.assertEqual(describe_number("10010"), "中国联通")
 
     def test_enterprise(self):
-        self.assertEqual(describe_number("10690955998"), "106 行业短信")
+        self.assertEqual(describe_number("10690955998"), "enterprise SMS")
 
     def test_mobile(self):
-        self.assertEqual(describe_number("+8613800138000"), "手机号")
+        self.assertEqual(describe_number("+8613800138000"), "mobile number")
 
     def test_unknown(self):
         self.assertEqual(describe_number("01010101010"), "")
@@ -219,34 +219,34 @@ class FilterTests(unittest.TestCase):
         return type("Args", (), base)
 
     def test_unread_only(self):
-        result = cli.filter_messages(self.messages, self._args(unread=True))
+        result = query.filter_messages(self.messages, self._args(unread=True))
         self.assertEqual([m.id for m in result], ["3"])
 
     def test_from_number_tail_match(self):
-        result = cli.filter_messages(self.messages, self._args(from_number="10010"))
+        result = query.filter_messages(self.messages, self._args(from_number="10010"))
         self.assertEqual({m.number for m in result}, {"10010"})
 
     def test_search(self):
-        result = cli.filter_messages(self.messages, self._args(search="验证码"))
+        result = query.filter_messages(self.messages, self._args(search="验证码"))
         self.assertEqual([m.id for m in result], ["3"])
 
     def test_regex(self):
-        result = cli.filter_messages(self.messages, self._args(regex="余额"))
+        result = query.filter_messages(self.messages, self._args(regex="余额"))
         self.assertEqual([m.id for m in result], ["2"])
 
     def test_since(self):
-        result = cli.filter_messages(self.messages, self._args(since="2026-10-01"))
+        result = query.filter_messages(self.messages, self._args(since="2026-10-01"))
         self.assertEqual([m.id for m in result], ["3", "2"])
 
     def test_limit_and_reverse(self):
-        result = cli.filter_messages(self.messages, self._args(limit=2, reverse=True))
+        result = query.filter_messages(self.messages, self._args(limit=2, reverse=True))
         self.assertEqual([m.id for m in result], ["1", "2"])
 
 
 class ThreadTests(unittest.TestCase):
     def test_build_threads(self):
         messages = [Message.from_api(p) for p in SAMPLE_PAYLOAD]
-        threads = cli.build_threads(messages)
+        threads = query.build_threads(messages)
         numbers = [t["number"] for t in threads]
         self.assertEqual(numbers, ["10690955998", "10010"])
         by_number = {t["number"]: t for t in threads}
@@ -255,11 +255,11 @@ class ThreadTests(unittest.TestCase):
 
     def test_thread_label_prefers_known_number(self):
         messages = [Message.from_api(SAMPLE_PAYLOAD[1])]
-        self.assertEqual(cli.thread_label(messages, "10010"), "中国联通")
+        self.assertEqual(query.thread_label(messages, "10010"), "中国联通")
 
     def test_thread_label_falls_back_to_signature(self):
         messages = [Message.from_api(SAMPLE_PAYLOAD[0])]
-        self.assertEqual(cli.thread_label(messages, "10690955998"), "示例银行")
+        self.assertEqual(query.thread_label(messages, "10690955998"), "示例银行")
 
 
 class EndToEndTests(unittest.TestCase):
@@ -435,13 +435,13 @@ class PagerWiringTests(unittest.TestCase):
         args = type("Args", (), {
             "color": "never", "width": 100, "pager": pager_mode, "quiet": False,
         })
-        return cli.Output(args, stream=stream)
+        return output.Output(args, stream=stream)
 
     def test_auto_pages_when_content_exceeds_screen(self):
         stream = FakeTty()
         out = self._output("auto", stream)
         out.height = 2
-        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+        with mock.patch.object(pager, "run_pager", return_value=True) as run:
             out.emit("a\nb\nc")
         run.assert_called_once()
         self.assertEqual(stream.getvalue(), "")
@@ -450,7 +450,7 @@ class PagerWiringTests(unittest.TestCase):
         stream = FakeTty()
         out = self._output("auto", stream)
         out.height = 40
-        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+        with mock.patch.object(pager, "run_pager", return_value=True) as run:
             out.emit("a\nb")
         run.assert_not_called()
         self.assertEqual(stream.getvalue(), "a\nb\n")
@@ -459,14 +459,14 @@ class PagerWiringTests(unittest.TestCase):
         stream = FakeTty()
         out = self._output("never", stream)
         out.height = 1
-        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+        with mock.patch.object(pager, "run_pager", return_value=True) as run:
             out.emit("a\nb\nc")
         run.assert_not_called()
 
     def test_always_forces_paging(self):
         stream = FakeTty()
         out = self._output("always", stream)
-        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+        with mock.patch.object(pager, "run_pager", return_value=True) as run:
             out.emit("a")
         run.assert_called_once()
 
@@ -474,7 +474,7 @@ class PagerWiringTests(unittest.TestCase):
         stream = io.StringIO()
         out = self._output("auto", stream)
         out.height = 1
-        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+        with mock.patch.object(pager, "run_pager", return_value=True) as run:
             out.emit("a\nb\nc")
         run.assert_not_called()
         self.assertEqual(stream.getvalue(), "a\nb\nc\n")
@@ -483,7 +483,7 @@ class PagerWiringTests(unittest.TestCase):
         stream = FakeTty()
         out = self._output("auto", stream)
         out.height = 1
-        with mock.patch.object(cli.pager, "run_pager", return_value=False):
+        with mock.patch.object(pager, "run_pager", return_value=False):
             out.emit("a\nb\nc")
         self.assertEqual(stream.getvalue(), "a\nb\nc\n")
 

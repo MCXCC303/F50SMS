@@ -99,11 +99,11 @@ def describe_number(number: str) -> str:
         return KNOWN_NUMBERS[national]
     kind = classify_number(raw)
     if kind == "enterprise":
-        return "106 行业短信"
+        return "enterprise SMS"
     if kind == "mobile":
-        return "手机号"
+        return "mobile number"
     if kind == "international":
-        return "国际号码"
+        return "international number"
     return ""
 
 
