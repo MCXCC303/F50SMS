@@ -329,14 +329,16 @@ def render_message_table(
         rows.append([
             Cell("#" + message.short_id, palette.dim),
             Cell(when, None),
-            Cell(truncate(sender_label(message), 12), None),
-            Cell(truncate(message.number, 14), None),
+            Cell(sender_label(message), None),
+            Cell(message.number, None),
             Cell(message.status_label, lambda text, m=message: status_style(m, palette)),
             Cell(content, None),
         ])
 
     aligns = ["right", "left", "left", "left", "left", "left"]
-    max_widths: List[Optional[int]] = [None, time_width, 12, 14, None, None]
+    # Only TIME is bounded: it is generated here, while SOURCE and NUMBER are
+    # data. Clipping a number can make two different short codes look alike.
+    max_widths: List[Optional[int]] = [None, time_width, None, None, None, None]
     return render_table(
         headers,
         rows,
@@ -433,16 +435,15 @@ def render_thread_table(
     for thread in threads:
         label = thread.get("label") or ""
         rows.append([
-            Cell(truncate(thread["number"], 17), None),
-            Cell(truncate(label, 14), None),
+            Cell(thread["number"], None),
+            Cell(label, None),
             Cell(str(thread["count"]), None),
             Cell(str(thread["unread"]), (lambda t: palette.style(t, "bold", "bright_yellow")) if thread["unread"] else None),
             Cell(thread["latest_time"], None),
             Cell(first_line(thread["latest_content"]), None),
         ])
     aligns = ["left", "left", "right", "right", "left", "left"]
-    max_widths: List[Optional[int]] = [17, 14, None, None, 19, None]
-    return render_table(headers, rows, aligns=aligns, palette=palette, max_widths=max_widths)
+    return render_table(headers, rows, aligns=aligns, palette=palette)
 
 
 # ---------------------------------------------------------------------------

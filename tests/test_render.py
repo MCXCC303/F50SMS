@@ -152,6 +152,43 @@ class PreviewTests(unittest.TestCase):
             self.assertIn(part, row)
         self.assertNotIn("\u2026", row)
 
+    def test_source_is_never_clipped(self):
+        # SOURCE comes from the 【...】 signature, and Chinese names run well
+        # past the old 12-column cap.
+        label = "燃气集团股份有限公司九龙坡分公司"
+        row = render_message_table(
+            [make(content="【" + label + "】节日提醒")], palette=Palette(False)
+        ).splitlines()[2]
+        self.assertIn(label, row)
+        self.assertNotIn("\u2026", row)
+
+    def test_number_is_never_clipped(self):
+        row = render_message_table(
+            [make(number="10684540390010457")], palette=Palette(False)
+        ).splitlines()[2]
+        self.assertIn("10684540390010457", row)
+        self.assertNotIn("\u2026", row)
+
+    def test_two_long_short_codes_stay_distinguishable(self):
+        left = render_message_table(
+            [make("1", number="10684540390010457")], palette=Palette(False)
+        ).splitlines()[2]
+        right = render_message_table(
+            [make("2", number="10680389390010457")], palette=Palette(False)
+        ).splitlines()[2]
+        self.assertIn("10684540390010457", left)
+        self.assertIn("10680389390010457", right)
+
+    def test_thread_table_keeps_the_label_whole(self):
+        label = "燃气集团股份有限公司九龙坡分公司"
+        message = make(number="106929350212261")
+        threads = build_threads([message])
+        threads[0]["label"] = label
+        row = render_thread_table(threads, palette=Palette(False)).splitlines()[2]
+        self.assertIn(label, row)
+        self.assertIn("106929350212261", row)
+        self.assertNotIn("\u2026", row)
+
     def test_thread_preview_uses_the_first_line(self):
         threads = build_threads([make(content=self.MULTI)])
         row = render_thread_table(threads, palette=Palette(False)).splitlines()[2]
