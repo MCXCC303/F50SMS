@@ -77,10 +77,17 @@ class Output:
 
 
 def resolve_format(args: Any, requested: Optional[str], human_default: str) -> str:
-    """Fall back to a plain, pipe-friendly format when not attached to a terminal."""
+    """Pick the output format.
+
+    Without an explicit -f this follows gh: the human format on a terminal, a
+    pipe-friendly one otherwise. --no-pager opts out of that adaptation, because
+    it means the caller is taking the stream as-is and viewing it elsewhere.
+    """
 
     if requested:
         return requested
+    if getattr(args, "pager", "auto") == "never":
+        return human_default
     if sys.stdout.isatty():
         return human_default
     return "plain" if human_default in ("table", "text", "chat") else human_default

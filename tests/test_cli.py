@@ -93,6 +93,43 @@ class FakeClient(F50Client):
         return 0.01
 
 
+class NoPagerFormatTests(unittest.TestCase):
+    """--no-pager also skips the pipe-friendly format fallback."""
+
+    def _list(self, argv):
+        client = FakeClient()
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "F50Client", return_value=client):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(argv)
+        return code, out.getvalue()
+
+    def test_piped_output_still_falls_back_to_plain(self):
+        # redirect_stdout gives a non-tty stream, i.e. the pipe case.
+        code, out = self._list(["list", "-n", "1"])
+        self.assertEqual(code, 0)
+        self.assertIn("\t", out)
+        self.assertNotIn("\u2500", out)
+
+    def test_no_pager_keeps_the_table(self):
+        code, out = self._list(["list", "-n", "1", "--no-pager"])
+        self.assertEqual(code, 0)
+        self.assertIn("ID", out)
+        self.assertIn("\u2500", out)
+        self.assertNotIn("\t", out)
+
+    def test_explicit_format_still_wins(self):
+        code, out = self._list(["list", "-n", "1", "--no-pager", "-f", "plain"])
+        self.assertEqual(code, 0)
+        self.assertIn("\t", out)
+        self.assertNotIn("\u2500", out)
+
+    def test_no_pager_does_not_force_colour(self):
+        # Colour would inject escapes into a pipeline the caller owns.
+        code, out = self._list(["list", "-n", "1", "--no-pager"])
+        self.assertNotIn("\x1b[", out)
+
+
 class SetAsReadTests(unittest.TestCase):
     """view marks an unread message read, unless told not to."""
 

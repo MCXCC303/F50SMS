@@ -261,7 +261,7 @@ def _add_global_options(
     )
     group.add_argument(
         "--no-pager", dest="pager", action="store_const", const="never", default=default("auto"),
-        help="never page, print directly",
+        help="never page, and keep the human format even when piped",
     )
     parser.add_argument(
         "-q", "--quiet", action="store_true", default=default(False),
