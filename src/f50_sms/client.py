@@ -322,7 +322,7 @@ class F50Client:
         if not secret:
             raise F50AuthError(
                 "a password is required to reach the router, but none was provided.",
-                hint="pass it with --password, or set F50_SMS_PASSWORD, or save it once with: f50sms config set --password",
+                hint="pass it with --password, set F50_SMS_PASSWORD, or save it once with: f50sms auth login",
                 needs_password=True,
             )
 

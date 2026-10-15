@@ -12,9 +12,6 @@ import os
 #: The command name shown in usage and error messages.
 PROG = "f50sms"
 
-#: Sentinel for "config set --password" with no value: prompt for the password.
-PROMPT_PASSWORD = object()
-
 #: Reserved for argparse usage errors, kept clear of the domain exit codes.
 EXIT_USAGE = 2
 

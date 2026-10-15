@@ -451,7 +451,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return retry_exc.exit_code
         out.note(
             "tip: run "
-            f"\"{PROG} config set --password\" to save the password for next time."
+            f"\"{PROG} auth login\" to save the password for next time."
         )
         return code
     except F50Error as exc:

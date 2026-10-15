@@ -133,7 +133,7 @@ class PasswordPromptTests(unittest.TestCase):
         self.assertEqual(out.strip(), "1")
         self.assertIsNotNone(client.accepted_password)
         prompt.assert_called_once()
-        self.assertIn("config set --password", err)
+        self.assertIn("auth login", err)
 
     def test_blank_password_aborts(self):
         code, _, err, client, _ = self._run(prompt_available=True, secret="")
