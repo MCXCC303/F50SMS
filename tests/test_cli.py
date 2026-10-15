@@ -37,12 +37,19 @@ SAMPLE_PAYLOAD = [
 
 
 class FakeClient(F50Client):
+    """默认会话已建立，因此不需要密码。"""
+
     def __init__(self, payload=None, **kwargs):
+        kwargs.setdefault("password", "s3cret")
         super().__init__("http://192.0.2.1", **kwargs)
         self.payload = payload if payload is not None else SAMPLE_PAYLOAD
+        self.login_attempts = 0
 
     def _request_json(self, path, params, post=False):
         cmd = params.get("cmd", "")
+        if post:
+            self.login_attempts += 1
+            return {"result": "0"}
         if cmd == "sms_data_total":
             return {"messages": self.payload}
         if cmd == "sms_capacity_info":
@@ -53,8 +60,10 @@ class FakeClient(F50Client):
             return {"sms_unread_num": "1", "sms_dev_unread_num": "1", "sms_sim_unread_num": "0"}
         if cmd == "RD":
             return {"RD": "x"}
+        if cmd == "LD":
+            return {"LD": "ld-token"}
         if cmd == "loginfo":
-            return {"loginfo": "fail"}
+            return {"loginfo": "ok"}
         if "modem_main_state" in cmd:
             return {"modem_main_state": "modem_init_complete", "network_type": "5G",
                     "network_provider": "示例运营商", "signalbar": "5", "lte_rsrp": "-96"}
@@ -62,6 +71,28 @@ class FakeClient(F50Client):
 
     def ping(self):
         return 0.01
+
+
+class PasswordGateClient(FakeClient):
+    """会话失效且没有密码，用来验证 CLI 的交互式询问与重试。"""
+
+    def __init__(self, payload=None):
+        super().__init__(payload, password=None)
+        self.accepted_password: str | None = None
+
+    def _probe_loginfo(self):
+        return True if self.accepted_password else False
+
+    def _request_json(self, path, params, post=False):
+        cmd = str(params.get("cmd", ""))
+        if post:
+            self.accepted_password = params.get("password")
+            return {"result": "0"}
+        if cmd == "LD":
+            return {"LD": "ld-token"}
+        if not self.accepted_password:
+            return {}
+        return super()._request_json(path, params, post)
 
 
 def run_cli(argv, client=None):
@@ -73,6 +104,40 @@ def run_cli(argv, client=None):
         with redirect_stdout(out), redirect_stderr(err):
             code = cli.main(argv)
     return code, out.getvalue(), err.getvalue()
+
+
+class PasswordPromptTests(unittest.TestCase):
+    """缺少密码时应询问一次并自动重试。"""
+
+    def _run(self, *, prompt_available: bool, secret: str):
+        client = PasswordGateClient()
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "F50Client", return_value=client), \
+             mock.patch.object(cli, "_can_prompt", return_value=prompt_available), \
+             mock.patch.object(cli.getpass, "getpass", return_value=secret) as prompt:
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(["count"])
+        return code, out.getvalue(), err.getvalue(), client, prompt
+
+    def test_prompts_and_retries(self):
+        code, out, err, client, prompt = self._run(prompt_available=True, secret="hunter2")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.strip(), "1")
+        self.assertIsNotNone(client.accepted_password)
+        prompt.assert_called_once()
+        self.assertIn("config set --password", err)
+
+    def test_blank_password_aborts(self):
+        code, _, err, client, _ = self._run(prompt_available=True, secret="")
+        self.assertEqual(code, 3)
+        self.assertIsNone(client.accepted_password)
+        self.assertIn("已取消", err)
+
+    def test_no_terminal_reports_instead_of_hanging(self):
+        code, _, err, _, prompt = self._run(prompt_available=False, secret="hunter2")
+        self.assertEqual(code, 3)
+        prompt.assert_not_called()
+        self.assertIn("没有提供密码", err)
 
 
 class TimeSpecTests(unittest.TestCase):

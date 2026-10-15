@@ -18,9 +18,28 @@
    失败：`3`=密码错误，`2`=已有用户登录，其它=失败。
 4. 服务端回 `Set-Cookie: JSESSIONID=...; Path=/goform`。
 
-只读命令（`cmd=...`）**不需要登录**，只要带上 `Referer` 即可读取短信；
-写命令（`goformId=...`）才需要会话与 `AD` 校验字段。因此本工具默认
-不做登录，只有在确实需要时才使用密码。
+关于鉴权
+--------
+
+`Referer` 只是第一道门，**读取短信同样需要有效的登录会话**。会话失效后
+路由器不返回错误，而是给出**静默的空响应**，这是最容易踩的坑：
+
+========================  ==========================  ============================
+请求                      会话有效                    会话失效
+========================  ==========================  ============================
+`cmd=loginfo`            `{"loginfo":"ok"}`         `{"loginfo":"no"}`
+`cmd=sms_data_total`     `{"messages":[...]}`       `{}`（没有 messages 字段）
+`cmd=sms_capacity_info`  `{"sms_nv_total":"150",…}`  `{}`
+`cmd=network_type,…`    字段齐全                    只回一部分非敏感字段
+========================  ==========================  ============================
+
+因此不能把「字段缺失」当成「没有数据」，否则会安静地报告 0 条短信。
+本模块的策略是：
+
+1. 数据命令之前先用 `cmd=loginfo` 确认会话，必要时自动登录；
+2. 响应缺少应有字段时判定为会话失效，重新登录后重试一次；
+3. 重试后仍缺字段，再查一次 `loginfo`：确认已登录才接受「确实为空」，
+   否则抛 :class:`F50AuthError`，绝不返回静默的空结果。
 """
 
 from __future__ import annotations
@@ -33,7 +52,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from .errors import F50AuthError, F50ConnectionError, F50Error, F50ProtocolError
 from .models import Message, merge_messages
@@ -82,6 +101,28 @@ def sha256_upper(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest().upper()
 
 
+#: 少数命令的响应字段名与命令名不同，需要显式声明。
+#: 未列出的命令按「命令名即响应字段名」处理。
+RESPONSE_KEYS: Dict[str, tuple] = {
+    "sms_data_total": ("messages",),
+    "sms_status_rpt_data": ("messages",),
+    "sms_capacity_info": ("sms_nv_total",),
+    "pbm_data_total": ("pbm_data",),
+}
+
+
+def expected_keys(cmd: str) -> List[str]:
+    """推断一条 `cmd` 的响应里应当出现哪些字段。
+
+    会话失效时路由器会漏掉这些字段，因此它们同时充当鉴权探针。
+    """
+
+    special = RESPONSE_KEYS.get(cmd)
+    if special:
+        return list(special)
+    return [name.strip() for name in cmd.split(",") if name.strip()]
+
+
 class F50Client:
     """与路由器通信的最小客户端。
 
@@ -111,7 +152,7 @@ class F50Client:
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self._jar)
         )
-        self._logged_in: Optional[bool] = None
+        self._session_ok: Optional[bool] = None
         self._ld: Optional[str] = None
 
     # -- 生命周期 ----------------------------------------------------------
@@ -126,7 +167,7 @@ class F50Client:
         """释放底层连接（urllib 没有显式连接池，这里只是清掉会话状态）。"""
 
         self._jar.clear()
-        self._logged_in = None
+        self._session_ok = None
 
     def __repr__(self) -> str:  # pragma: no cover - 便于调试
         return f"F50Client(host={self.host!r})"
@@ -201,29 +242,55 @@ class F50Client:
 
     # -- 命令封装 ----------------------------------------------------------
 
-    def get_cmd(self, cmd: str, *, retry_on_auth: bool = True, **params: Any) -> Dict[str, Any]:
-        """执行一条或多条只读 `cmd`。
-
-        多条命令用逗号分隔时会自动补上 `multi_data=1`。
-        """
+    def _raw_get(self, cmd: str, params: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        """发一条只读命令，不做任何会话检查。"""
 
         payload: Dict[str, Any] = {"isTest": "false", "cmd": cmd}
         if "," in cmd:
             payload.setdefault("multi_data", "1")
-        payload.update(params)
+        if params:
+            payload.update(params)
+        return self._request_json(GET_PATH, payload)
 
-        data = self._request_json(GET_PATH, payload)
-        if "Error" in data and retry_on_auth:
-            self.login()
-            data = self._request_json(GET_PATH, payload)
+    @staticmethod
+    def _incomplete(data: Mapping[str, Any], keys: Sequence[str]) -> bool:
+        """响应是否缺少全部应有字段（即疑似会话失效）。"""
+
+        if "Error" in data:
+            return True
+        if not keys:
+            return False
+        return not all(key in data for key in keys)
+
+    def get_cmd(self, cmd: str, **params: Any) -> Dict[str, Any]:
+        """执行一条或多条只读 `cmd`，并保证结果来自已登录的会话。
+
+        多条命令用逗号分隔时会自动补上 `multi_data=1`。
+        """
+
+        keys = expected_keys(cmd)
+        self.ensure_session()
+
+        data = self._raw_get(cmd, params)
+        if self._incomplete(data, keys):
+            # 缺字段有两种可能：会话刚失效，或者本来就没有数据。
+            # 先问一次 loginfo，避免把「空收件箱」误判成掉线。
+            if self._probe_loginfo() is not True:
+                self._session_ok = False
+                self.ensure_session(force=True)
+                data = self._raw_get(cmd, params)
+                if self._incomplete(data, keys) and self._probe_loginfo() is not True:
+                    raise F50AuthError(
+                        f"登录后仍未取到数据（缺少字段：{'、'.join(keys)}）。",
+                        hint="在浏览器里打开后台确认能看到短信，然后重试。",
+                        needs_password=not self.has_password,
+                    )
+
         if "Error" in data:
             raise F50AuthError(
                 f"路由器拒绝读取（{data.get('Error')}）。",
                 hint="请确认已连接到 F50 的局域网，并且后台未被重启。",
             )
-        if "," not in cmd and set(data) == {cmd} and data[cmd] == "":
-            # 未知命令会返回 {"<cmd>": ""}，这里不算错误，交给调用方判断。
-            return data
         return data
 
     def set_cmd(self, goform_id: str, *, with_ad: bool = False, **params: Any) -> Dict[str, Any]:
@@ -246,7 +313,7 @@ class F50Client:
     def logged_in(self) -> Optional[bool]:
         """`True`/`False` 表示已知的登录状态，`None` 表示尚未检查。"""
 
-        return self._logged_in
+        return self._session_ok
 
     def login(self, password: Optional[str] = None) -> bool:
         """登录后台。成功返回 `True`，密码错误抛 :class:`F50AuthError`。"""
@@ -254,9 +321,10 @@ class F50Client:
         secret = password if password is not None else self.password
         if not secret:
             raise F50AuthError(
-                "需要登录路由器，但没有提供后台密码。",
+                "需要登录路由器后台，但没有提供密码。",
                 hint="用 --password 传入，或设置环境变量 F50_SMS_PASSWORD，"
-                     "或执行 f50sms config set --password '...' 保存到配置文件。",
+                     "或执行 f50sms config set --password 保存到配置文件。",
+                needs_password=True,
             )
 
         try:
@@ -278,15 +346,16 @@ class F50Client:
         )
         code = str(result.get("result", ""))
         if code in ("0", "4"):
-            self._logged_in = True
+            self._session_ok = True
             self._ld = ld
             return True
 
-        self._logged_in = False
+        self._session_ok = False
         if code == "3":
             raise F50AuthError(
                 "后台密码错误。",
                 hint="密码区分大小写；若已在网页端改过密码，请同步更新配置。",
+                needs_password=True,
             )
         if code == "2":
             raise F50AuthError(
@@ -295,21 +364,35 @@ class F50Client:
             )
         raise F50AuthError(f"登录失败（result={code or '未知'}）。")
 
-    def ensure_login(self) -> None:
-        """按需登录：先用 `cmd=loginfo` 探测，未登录再走登录流程。"""
+    def _probe_loginfo(self) -> Optional[bool]:
+        """查一次 `loginfo`：`True` 已登录，`False` 未登录，`None` 无法判断。"""
 
-        if self._logged_in:
-            return
         try:
-            info = self._request_json(
-                GET_PATH, {"isTest": "false", "cmd": "loginfo", "multi_data": "1"}
-            )
+            info = self._raw_get("loginfo", {"multi_data": "1"})
         except F50Error:
-            info = {}
-        if str(info.get("loginfo", "")) == "ok":
-            self._logged_in = True
+            return None
+        value = info.get("loginfo")
+        if value is None:
+            return None
+        return str(value) == "ok"
+
+    def ensure_session(self, *, force: bool = False) -> None:
+        """确保处于登录态；未登录则自动登录。
+
+        会话仍有效时不会白白登录一次，因此网页端已登录的情况下无需密码。
+        """
+
+        if self._session_ok and not force:
+            return
+        if not force and self._probe_loginfo() is True:
+            self._session_ok = True
             return
         self.login()
+
+    def ensure_login(self) -> None:
+        """`ensure_session` 的别名，保留旧名字方便调用。"""
+
+        self.ensure_session()
 
     def anti_csrf_token(self) -> str:
         """计算写命令需要的 `AD` 字段（网页端 `cookWithRequest` 的等价实现）。
@@ -321,16 +404,12 @@ class F50Client:
         return sha256_upper(sha256_upper("") + rd)
 
     def check_login(self) -> Optional[bool]:
-        """返回路由器当前是否处于登录态，失败时返回 `None`。"""
+        """返回路由器当前是否处于登录态，失败时返回 `None`。
 
-        try:
-            info = self.get_cmd("loginfo", retry_on_auth=False)
-        except F50Error:
-            return None
-        value = info.get("loginfo")
-        if value is None:
-            return None
-        return str(value) == "ok"
+        只做探测，不会顺手登录，`doctor` 用它汇报真实的会话状态。
+        """
+
+        return self._probe_loginfo()
 
     # -- 短信 --------------------------------------------------------------
 
@@ -361,9 +440,7 @@ class F50Client:
                 tags=tags,
                 order_by=order_by,
             )
-            batch = data.get("messages")
-            if batch is None:
-                batch = []
+            batch = data.get("messages", [])
             if not isinstance(batch, list):
                 raise F50ProtocolError(
                     f"sms_data_total 返回了意外的 messages 字段：{batch!r}"
@@ -482,10 +559,14 @@ class F50Client:
     # -- 便捷方法 ----------------------------------------------------------
 
     def ping(self) -> float:
-        """返回一次 `cmd=RD` 往返耗时（秒）；用于 doctor 检测连通性。"""
+        """返回一次 `cmd=RD` 往返耗时（秒）。
+
+        只测连通性，不建立会话，因此不需要密码；`doctor` 靠它区分
+        「网络不通」和「需要登录」两种情况。
+        """
 
         start = time.monotonic()
-        self.get_cmd("RD")
+        self._raw_get("RD")
         return time.monotonic() - start
 
 

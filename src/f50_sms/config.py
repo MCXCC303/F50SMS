@@ -118,7 +118,7 @@ def resolve_settings(
     elif values.get("password"):
         settings.password, sources["password"] = str(values["password"]), f"配置文件 {path}"
     else:
-        settings.password, sources["password"] = None, "未提供（只读命令通常不需要）"
+        settings.password, sources["password"] = None, "未提供（会话仍有效时可以不填）"
 
     # timeout
     env_timeout = os.environ.get(ENV_TIMEOUT)

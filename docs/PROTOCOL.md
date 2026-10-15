@@ -31,8 +31,26 @@ POST /goform/goform_set_cmd_process   （application/x-www-form-urlencoded）
 前端用的是 `Referer: http://192.168.0.1/index.html`（由浏览器自动带上），
 命令行里手动加同一个头即可。
 
-只读命令**不校验会话**：不带任何 Cookie、没有登录过，一样能读到短信。
-写命令才需要 `JSESSIONID` 与 `AD` 字段。
+### 会话是必须的，而且失效时不会报错
+
+读短信同样需要有效的登录会话。**关键陷阱**：会话失效后路由器不返回错误，
+而是给出**静默的空响应**，字段悄悄消失：
+
+| 请求 | 会话有效 | 会话失效 |
+| --- | --- | --- |
+| `cmd=loginfo` | `{"loginfo":"ok"}` | `{"loginfo":"no"}` |
+| `cmd=sms_data_total` | `{"messages":[...]}` | `{}`（没有 messages 字段） |
+| `cmd=sms_capacity_info` | `{"sms_nv_total":"150",...}` | `{}` |
+| `cmd=network_type,network_provider` | 字段齐全 | 只回 `network_provider` |
+
+（无 `Referer` 时才是上面那个 `{"Error":"none secure connection"}`，
+两者是**不同**的失败模式，容易混淆。）
+
+因此客户端必须按「响应是否缺少应有字段」判断鉴权，不能把缺字段当成
+「没有数据」，否则会安静地报告 0 条短信。
+
+登录的作用范围看起来是**设备级**的：任何客户端登录成功后，其它不带 Cookie
+的客户端在会话有效期内也能直接读取。写命令则需要 `JSESSIONID` 与 `AD`。
 
 ---
 

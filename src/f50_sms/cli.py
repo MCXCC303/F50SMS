@@ -2,15 +2,19 @@
 
 设计原则：
 
-* 只读命令默认不需要密码——F50 固件的 `cmd=...` 接口只校验 `Referer`；
+* 读取短信需要登录会话，会话失效时路由器给的是静默空响应而不是错误；
+* 会话仍有效时复用现有会话，失效则自动登录；只差密码时交互式询问一次再重试；
 * 输出默认为「人看着舒服」，重定向到管道时自动退化成纯文本；
+* 内容超过一屏且输出到终端时交给分页器，重定向时永不启动分页器；
 * 任何数据格式（json/csv/…）都只输出数据本身，不掺杂提示语。
 """
 
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import os
 import re
 import sys
 import time
@@ -21,7 +25,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from . import __version__
 from .client import DEFAULT_HOST, F50Client
 from .config import config_path, load_config, resolve_settings, save_config
-from .errors import F50Error, F50NotFoundError
+from .errors import F50AuthError, F50Error, F50NotFoundError
 from .labels import classify_number, describe_number, normalize_number
 from .models import TAG_ALIASES, TAG_LABELS, Message
 from . import pager
@@ -45,6 +49,9 @@ from .render import (
 )
 
 PROG = "f50sms"
+
+#: `config set --password` 不带值时的占位符，表示「请提示我输入」。
+PROMPT_PASSWORD = object()
 
 LIST_FORMATS = ("table", "plain", "json", "jsonl", "csv", "markdown")
 SHOW_FORMATS = ("card", "plain", "json")
@@ -198,7 +205,10 @@ def build_parser() -> argparse.ArgumentParser:
     config_sub.add_parser("path", parents=[config_common], help="显示配置文件路径")
     set_parser = config_sub.add_parser("set", parents=[config_common], help="保存配置项")
     set_parser.add_argument("--host", metavar="URL", help="路由器地址")
-    set_parser.add_argument("--password", metavar="PW", help="后台密码")
+    set_parser.add_argument(
+        "--password", metavar="PW", nargs="?", const=PROMPT_PASSWORD,
+        help="后台密码；不写值则交互式输入（不回显）",
+    )
     set_parser.add_argument("--timeout", type=float, metavar="SEC", help="超时秒数")
     config_sub.add_parser("unset", parents=[config_common], help="清空配置文件")
 
@@ -785,13 +795,24 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         updates = {}
         if args.host:
             updates["host"] = args.host
-        if args.password:
+        if args.password is PROMPT_PASSWORD:
+            secret = _prompt_password("要保存的后台密码: ")
+            if not secret:
+                raise F50NotFoundError("没有输入密码，已取消。")
+            updates["password"] = secret
+        elif args.password:
             updates["password"] = args.password
         if args.timeout is not None:
             updates["timeout"] = args.timeout
         if not updates:
-            raise F50NotFoundError("没有提供要保存的配置项。", hint="例如 f50sms config set --password 'xxx'")
-        saved = save_config(updates, args.config)
+            raise F50NotFoundError("没有提供要保存的配置项。", hint="例如 f50sms config set --password")
+        try:
+            saved = save_config(updates, args.config)
+        except OSError as exc:
+            raise F50NotFoundError(
+                f"无法写入配置文件 {path}：{exc.strerror or exc}",
+                hint="换一个可写路径（--config），或者改用环境变量 F50_SMS_PASSWORD。",
+            ) from exc
         out.note(f"已写入 {saved}")
         for key, value in updates.items():
             shown = "******" if key == "password" else value
@@ -843,20 +864,23 @@ def cmd_doctor(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         out.emit("\n".join(lines))
         return 1
 
-    # 2. 登录态
+    # 2. 登录态。读取短信同样需要会话，这里如实区分三种情况。
+    lines.append(f"密码来源      {settings.sources.get('password', '')}")
     logged = client.check_login()
     if logged is True:
-        lines.append(ok("登录状态      已登录"))
+        lines.append(ok("登录状态      已登录（会话仍有效，本次无需密码）"))
     elif logged is False:
-        lines.append(warn("登录状态      未登录（只读命令通常仍可用）"))
+        lines.append(warn("登录状态      未登录"))
         if settings.password:
             try:
                 client.login()
-                lines.append(ok("尝试登录      成功"))
+                lines.append(ok("自动登录      成功"))
             except F50Error as exc:
-                lines.append(fail(f"尝试登录      失败：{exc}"))
+                lines.append(fail(f"自动登录      失败：{exc}"))
         else:
-            lines.append("              未提供密码，跳过登录（用 --password 或 config set --password）")
+            lines.append(fail("自动登录      缺少密码"))
+            lines.append("              用 --password、F50_SMS_PASSWORD 或 "
+                         f"{PROG} config set --password 提供")
     else:
         lines.append(warn("登录状态      无法判断（loginfo 无响应）"))
 
@@ -940,9 +964,30 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     client = F50Client(settings.host, password=settings.password, timeout=settings.timeout)
+    handler = COMMANDS[args.command]
     try:
-        handler = COMMANDS[args.command]
         return handler(client, args, out)
+    except F50AuthError as exc:
+        # 只差一个密码时，交互式问一次再重试，不直接失败。
+        if not exc.needs_password or client.has_password or not _can_prompt():
+            print(f"{PROG}: {exc}", file=sys.stderr)
+            return exc.exit_code
+        secret = _prompt_password()
+        if not secret:
+            print(f"{PROG}: 已取消。", file=sys.stderr)
+            return exc.exit_code
+        client.password = secret
+        client.close()
+        try:
+            code = handler(client, args, out)
+        except F50Error as retry_exc:
+            print(f"{PROG}: {retry_exc}", file=sys.stderr)
+            return retry_exc.exit_code
+        out.note(
+            "提示：执行 "
+            f"\"{PROG} config set --password\" 可以保存密码，之后不必每次输入。"
+        )
+        return code
     except F50Error as exc:
         print(f"{PROG}: {exc}", file=sys.stderr)
         return exc.exit_code
@@ -957,6 +1002,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return 0
     finally:
         client.close()
+
+
+def _can_prompt() -> bool:
+    """能否交互式询问密码：标准输入得是终端，且没被显式禁用。"""
+
+    if os.environ.get("F50_SMS_NO_PROMPT"):
+        return False
+    try:
+        return bool(sys.stdin.isatty())
+    except Exception:  # pragma: no cover - 极端环境
+        return False
+
+
+def _prompt_password(prompt: str = "路由器后台密码: ") -> str:
+    """不带回显地读取密码；无法交互时返回空串。"""
+
+    try:
+        return getpass.getpass(prompt)
+    except (EOFError, KeyboardInterrupt):
+        print("", file=sys.stderr)
+        return ""
+    except Exception:  # pragma: no cover - 没有可用终端
+        return ""
 
 
 def _opt(args: argparse.Namespace, name: str, default: Any = None) -> Any:

@@ -29,9 +29,17 @@ class F50ConnectionError(F50Error):
 
 
 class F50AuthError(F50Error):
-    """需要登录、密码错误或登录被拒绝。"""
+    """需要登录、密码错误或登录被拒绝。
+
+    `needs_password=True` 表示「给个密码就能继续」。CLI 会据此交互式询问
+    密码并自动重试，而不是直接报错退出。
+    """
 
     exit_code = 3
+
+    def __init__(self, message: str, *, hint: str | None = None, needs_password: bool = False) -> None:
+        super().__init__(message, hint=hint)
+        self.needs_password = needs_password
 
 
 class F50ProtocolError(F50Error):
