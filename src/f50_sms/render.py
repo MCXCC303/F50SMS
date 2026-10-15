@@ -522,38 +522,33 @@ EXPORTERS = {
 # ---------------------------------------------------------------------------
 
 
+#: Keys of the --stat block, in a fixed order so the output stays parseable.
+STAT_KEYS = ("messages", "unread", "read", "sent", "failed", "draft", "threads")
+
+
 def summarize(messages: Sequence[Message]) -> Dict[str, int]:
     return {
-        "total": len(messages),
+        "messages": len(messages),
         "unread": sum(1 for m in messages if m.is_unread),
         "read": sum(1 for m in messages if m.is_read),
         "sent": sum(1 for m in messages if m.is_sent),
         "failed": sum(1 for m in messages if m.is_send_failed),
         "draft": sum(1 for m in messages if m.is_draft),
-        "senders": len({m.number for m in messages}),
+        "threads": len({m.number for m in messages}),
         "unknown_direction": sum(
             1 for m in messages if m.tag not in ("0", "1", "2", "3", "4")
         ),
     }
 
 
-def render_summary(stats: Dict[str, int], *, palette: Optional[Palette] = None) -> str:
-    palette = palette or Palette(False)
-    parts = [f"{palette.bold(str(stats['total']))} messages"]
-    if stats["unread"]:
-        parts.append(palette.style(f"{stats['unread']} unread", "bold", "bright_yellow"))
-    else:
-        parts.append("0 unread")
-    if stats["read"]:
-        parts.append(f"{stats['read']} read")
-    if stats["sent"]:
-        parts.append(palette.green(f"{stats['sent']} sent"))
-    if stats["failed"]:
-        parts.append(palette.red(f"{stats['failed']} failed"))
-    if stats["draft"]:
-        parts.append(palette.cyan(f"{stats['draft']} draft"))
-    parts.append(f"{stats['senders']} threads")
-    return " · ".join(parts)
+def render_stat_block(stats: Dict[str, int]) -> str:
+    """Render the counts as key<TAB>value lines.
+
+    Every key is always present, including the zero ones, so the block keeps a
+    stable shape and its numbers add up to the message count.
+    """
+
+    return "\n".join(f"{key}\t{stats.get(key, 0)}" for key in STAT_KEYS)
 
 
 def classify_sender(number: str) -> str:

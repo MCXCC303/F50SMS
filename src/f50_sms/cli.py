@@ -99,6 +99,10 @@ def build_parser() -> argparse.ArgumentParser:
         description="List messages, optionally filtered by state, number, text, or time.",
     )
     _add_filter_options(list_parser)
+    list_parser.add_argument(
+        "--stat", action="store_true",
+        help="prepend a statistics block to the table view",
+    )
     _add_format_option(list_parser, LIST_FORMATS, default=None)
 
     # view -----------------------------------------------------------------

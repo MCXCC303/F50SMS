@@ -387,7 +387,38 @@ class EndToEndTests(unittest.TestCase):
 
     def test_count_json(self):
         code, out, _ = run_cli(["count", "--json"])
-        self.assertEqual(json.loads(out)["total"], 3)
+        self.assertEqual(json.loads(out)["messages"], 3)
+
+    def test_count_all(self):
+        # Every statistic is keyed the same way, so --all must read the same
+        # key the JSON output uses.
+        code, out, _ = run_cli(["count", "--all"])
+        self.assertEqual((code, out.strip()), (0, "3"))
+
+    def test_list_does_not_write_a_summary_to_stderr(self):
+        code, out, err = run_cli(["list", "-n", "1", "--no-pager"])
+        self.assertEqual(code, 0)
+        self.assertEqual(err.strip(), "")
+
+    def test_stat_prepends_a_parseable_block(self):
+        code, out, err = run_cli(["list", "-n", "3", "--stat", "--no-pager"])
+        self.assertEqual(code, 0)
+        block = out.split("\n\n")[0].splitlines()
+        pairs = dict(line.split("\t") for line in block)
+        self.assertEqual(pairs["messages"], "3")
+        self.assertEqual(pairs["unread"], "1")
+        self.assertEqual(pairs["read"], "2")
+        self.assertEqual(pairs["threads"], "2")
+        # A stable shape, so the block stays parseable.
+        self.assertEqual(
+            [line.split("\t")[0] for line in block],
+            ["messages", "unread", "read", "sent", "failed", "draft", "threads"],
+        )
+
+    def test_stat_leaves_machine_formats_alone(self):
+        code, out, _ = run_cli(["list", "-n", "1", "--stat"])
+        self.assertEqual(code, 0)
+        self.assertNotIn("messages\t", out)
 
     def test_show_card(self):
         code, out, _ = run_cli(["show", "3", "--color", "never"])

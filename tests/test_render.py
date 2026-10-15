@@ -311,7 +311,7 @@ class GhStyleHeaderTests(unittest.TestCase):
 class SummaryTests(unittest.TestCase):
     def test_counts(self):
         stats = summarize([make("1", tag="1"), make("2", tag="0"), make("3", tag="2")])
-        self.assertEqual(stats["total"], 3)
+        self.assertEqual(stats["messages"], 3)
         self.assertEqual(stats["unread"], 1)
         self.assertEqual(stats["read"], 1)
         self.assertEqual(stats["sent"], 1)

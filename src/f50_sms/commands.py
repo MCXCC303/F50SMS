@@ -27,7 +27,7 @@ from .render import (
     EXPORTERS,
     pad,
     render_message_detail,
-    render_summary,
+    render_stat_block,
     render_thread,
     render_thread_table,
     sender_label,
@@ -66,11 +66,13 @@ def cmd_list(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         else:
             out.note("no messages matched.")
         return 0
-    out.emit(render_messages(
+    body = render_messages(
         messages, fmt, out, full=args.full, time_style=_time_style(args),
-    ))
-    if fmt not in DATA_FORMATS and not args.quiet:
-        out.note(render_summary(summarize(messages), palette=out.palette))
+    )
+    if args.stat and fmt == "table":
+        # Table view only: the block would look like a data row in plain/csv.
+        body = render_stat_block(summarize(messages)) + "\n\n" + body
+    out.emit(body)
     return 0
 
 
@@ -225,7 +227,7 @@ def cmd_count(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     if args.json:
         out.emit(json.dumps(stats, ensure_ascii=False))
         return 0
-    out.emit(str(stats["total"] if args.all else stats["unread"]))
+    out.emit(str(stats["messages"] if args.all else stats["unread"]))
     return 0
 
 
@@ -526,8 +528,8 @@ def cmd_doctor(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     try:
         messages = client.fetch_messages()
         stats = summarize(messages)
-        lines.append(ok(f"SMS read      {stats['total']} messages, {stats['unread']} unread,"
-                        f"{stats['senders']} conversations"))
+        lines.append(ok(f"SMS read      {stats['messages']} messages, {stats['unread']} unread, "
+                        f"{stats['threads']} conversations"))
         if messages:
             newest = messages[0]
             lines.append(f"              latest: #{newest.id} {newest.timestamp_text} "
