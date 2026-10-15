@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
-from .constants import PROG, PROMPT_PASSWORD, prompt_password as _prompt_password
+from .constants import PROG, prompt_password as _prompt_password
 from .client import F50Client
 from .config import config_path, load_config, resolve_settings, save_config
 from .errors import F50Error, F50NotFoundError
@@ -74,17 +74,24 @@ def cmd_list(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     return 0
 
 
-def cmd_show(client: F50Client, args: argparse.Namespace, out: Output) -> int:
-    if not args.id and not args.from_number:
-        raise F50NotFoundError("give a message id, or use --from with a number.", hint="for example: f50sms show 57")
+def cmd_view(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+    """View one message: by reference, by sender, or the latest one."""
+
     messages = _load_messages(client, args)
     target: Optional[Message] = None
-    if args.id:
+    if not args.id and not args.from_number:
+        # Like gh, an unqualified view falls back to the most relevant item.
+        if not messages:
+            raise F50NotFoundError("the mailbox is empty.")
+        ordered = sorted(messages, key=lambda m: m.sort_key)
+        unread = [m for m in ordered if m.is_unread]
+        target = (unread or ordered)[-1]
+    elif args.id:
         hits = resolve_ref(messages, str(args.id))
         if not hits:
             raise F50NotFoundError(
                 f"no message matching {args.id}.",
-                hint="run f50sms list to see the available ids.",
+                hint=f"run {PROG} list to see the available ids.",
             )
         if len(hits) > 1:
             candidates = ", ".join(m.short_id for m in hits[:8])
@@ -121,7 +128,7 @@ def messages_plain(messages: Sequence[Message]) -> str:
     return "\n".join(lines)
 
 
-def cmd_thread(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+def cmd_thread_view(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     messages = _load_messages(client, args)
     tail = re.sub(r"\D", "", args.number)[-8:]
     if not tail:
@@ -143,7 +150,7 @@ def cmd_thread(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     return 0
 
 
-def cmd_threads(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+def cmd_thread_list(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     messages = _load_messages(client, args)
     threads = build_threads(messages)
     if args.unread:
@@ -310,28 +317,17 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         updates = {}
         if args.host:
             updates["host"] = args.host
-        if args.password is PROMPT_PASSWORD:
-            secret = _prompt_password("Password to save: ")
-            if not secret:
-                raise F50NotFoundError("no password entered; cancelled.")
-            updates["password"] = secret
-        elif args.password:
-            updates["password"] = args.password
         if args.timeout is not None:
             updates["timeout"] = args.timeout
         if not updates:
-            raise F50NotFoundError("nothing to save.", hint="for example: f50sms config set --password")
-        try:
-            saved = save_config(updates, args.config)
-        except OSError as exc:
             raise F50NotFoundError(
-                f"cannot write the config file {path}: {exc.strerror or exc}",
-                hint="choose a writable path (--config), or use the F50_SMS_PASSWORD environment variable.",
-            ) from exc
+                "nothing to save.",
+                hint=f"for example: {PROG} config set --host http://192.168.0.1",
+            )
+        saved = _write_config(updates, args.config, path)
         out.note(f"wrote {saved}")
         for key, value in updates.items():
-            shown = "******" if key == "password" else value
-            out.note(f"  {key} = {shown}")
+            out.note(f"  {key} = {value}")
         return 0
 
     # show
@@ -352,6 +348,89 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         rows.append(("Keys in file", ", ".join(sorted(stored))))
     label_width = max(text_width(label) for label, _ in rows)
     out.emit("\n".join(pad(label, label_width) + "  " + value for label, value in rows))
+    return 0
+
+
+def _write_config(updates: Dict[str, Any], config_file: Optional[str], path: Path) -> Path:
+    """Write settings, turning a filesystem error into a friendly message."""
+
+    try:
+        return save_config(updates, config_file)
+    except OSError as exc:
+        raise F50NotFoundError(
+            f"cannot write the config file {path}: {exc.strerror or exc}",
+            hint="choose a writable path (--config), or use the environment variables instead.",
+        ) from exc
+
+
+def cmd_auth_login(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+    """Store the router password after verifying it actually works."""
+
+    path = config_path(args.config)
+    secret = args.password
+    if not secret:
+        secret = _prompt_password("Router password: ")
+    if not secret:
+        raise F50NotFoundError("no password entered; cancelled.")
+
+    # Verify before saving so a typo does not get persisted.
+    client.password = secret
+    client.close()
+    client.login()
+    _write_config({"password": secret}, args.config, path)
+    out.note(f"saved the password to {path}")
+    out.note("the session is live; later runs will reuse it until it expires.")
+    return 0
+
+
+def cmd_auth_status(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+    """Report where the password comes from and whether a session is live."""
+
+    settings = resolve_settings(
+        host=_opt(args, "host"),
+        password=_opt(args, "password"),
+        timeout=_opt(args, "timeout"),
+        config_file=args.config,
+    )
+    path = config_path(args.config)
+    stored = load_config(args.config)
+    session = client.check_login()
+
+    rows = [
+        ("Config file", str(path) + ("" if path.exists() else " (not present)")),
+        ("Host", settings.host),
+        ("Password", ("stored in " + str(path)) if stored.get("password")
+            else ("from " + settings.sources.get("password", "nowhere")) if settings.password
+            else "not set"),
+        ("Session", {True: "signed in", False: "not signed in"}.get(session, "unknown")),
+    ]
+    label_width = max(text_width(label) for label, _ in rows)
+    out.emit(chr(10).join(pad(label, label_width) + "  " + value for label, value in rows))
+    if not settings.password and session is not True:
+        out.note(f"run {PROG} auth login to store a password.")
+    return 0
+
+
+def cmd_auth_logout(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+    """Forget the stored password, leaving other settings alone."""
+
+    path = config_path(args.config)
+    stored = load_config(args.config)
+    if not stored.get("password"):
+        out.note("no stored password to remove.")
+        return 0
+    del stored["password"]
+    try:
+        if stored:
+            save_config(stored, args.config, replace=True)
+        else:
+            # Nothing left to keep, so drop the file entirely.
+            path.unlink(missing_ok=True)
+    except OSError as exc:
+        raise F50NotFoundError(
+            f"cannot update the config file {path}: {exc.strerror or exc}",
+        ) from exc
+    out.note(f"removed the stored password from {path}")
     return 0
 
 
@@ -395,7 +474,7 @@ def cmd_doctor(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         else:
             lines.append(fail("Auto login    no password available"))
             lines.append("              supply it with --password, F50_SMS_PASSWORD or "
-                         f"{PROG} config set --password")
+                         f"{PROG} auth login")
     else:
         lines.append(warn("Signed in     unknown (loginfo gave no answer)"))
 
@@ -429,17 +508,55 @@ def cmd_doctor(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     return 0
 
 
+#: Handler registry. Nested commands are keyed "group action", mirroring the
+#: command layout of the GitHub CLI.
 COMMANDS = {
     "list": cmd_list,
-    "ls": cmd_list,
-    "show": cmd_show,
-    "thread": cmd_thread,
-    "chat": cmd_thread,
-    "threads": cmd_threads,
+    "view": cmd_view,
+    "thread list": cmd_thread_list,
+    "thread view": cmd_thread_view,
     "count": cmd_count,
     "status": cmd_status,
     "export": cmd_export,
     "watch": cmd_watch,
-    "config": cmd_config,
+    "auth login": cmd_auth_login,
+    "auth status": cmd_auth_status,
+    "auth logout": cmd_auth_logout,
+    "config show": cmd_config,
+    "config path": cmd_config,
+    "config set": cmd_config,
+    "config unset": cmd_config,
     "doctor": cmd_doctor,
 }
+
+#: Single-word aliases, each mapping onto the first token of a real command.
+COMMAND_ALIASES = {
+    "ls": "list",
+    "show": "view",
+    "chat": "thread",
+    "threads": "thread",
+}
+
+#: Command groups whose second word selects an action.
+COMMAND_GROUPS = ("thread", "auth", "config")
+
+#: Actions available inside each group.
+COMMAND_ACTIONS = {
+    "thread": ("list", "view"),
+    "auth": ("login", "status", "logout"),
+    "config": ("show", "path", "set", "unset"),
+}
+
+#: Action assumed when a group is invoked without one.
+COMMAND_DEFAULT_ACTION = {
+    "thread": "list",
+    "auth": "status",
+    "config": "show",
+}
+
+#: Every word accepted as the first argument on the command line.
+TOP_LEVEL_COMMANDS = frozenset(
+    {key for key in COMMANDS if " " not in key}
+    | set(COMMAND_GROUPS)
+    | set(COMMAND_ALIASES)
+)

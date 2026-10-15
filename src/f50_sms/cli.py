@@ -22,12 +22,18 @@ from typing import Any, Optional, Sequence
 
 from . import __version__
 from .client import F50Client
-from .commands import COMMANDS
+from .commands import (
+    COMMAND_ACTIONS,
+    COMMAND_ALIASES,
+    COMMAND_DEFAULT_ACTION,
+    COMMAND_GROUPS,
+    COMMANDS,
+    TOP_LEVEL_COMMANDS,
+)
 from .config import resolve_settings
 from .constants import (
     EXIT_USAGE,
     PROG,
-    PROMPT_PASSWORD,
     can_prompt as _can_prompt,
     prompt_password as _prompt_password,
 )
@@ -69,9 +75,6 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     _add_global_options(common, suppress_defaults=True)
 
-    config_common = argparse.ArgumentParser(add_help=False)
-    _add_global_options(config_common, suppress_defaults=True, credentials=False)
-
     parser = _Parser(
         prog=PROG,
         description="Read-only SMS client for the ZTE F50 mobile hotspot",
@@ -92,37 +95,44 @@ def build_parser() -> argparse.ArgumentParser:
 
     # list -----------------------------------------------------------------
     list_parser = subparsers.add_parser(
-        "list", aliases=["ls"], parents=[common], help="list messages (default command)",
+        "list", parents=[common], help="list messages (default command)",
         description="List messages, optionally filtered by state, number, text, or time.",
     )
     _add_filter_options(list_parser)
     _add_format_option(list_parser, LIST_FORMATS, default=None)
 
-    # show -----------------------------------------------------------------
-    show_parser = subparsers.add_parser(
-        "show", parents=[common], help="show one message in detail",
-        description="Show one message by id, or the latest one from a number with --from.",
+    # view -----------------------------------------------------------------
+    view_parser = subparsers.add_parser(
+        "view", parents=[common], help="view one message in detail",
+        description=(
+            "View a message by id, the latest one from a number with --from, or "
+            "the newest unread message when no argument is given."
+        ),
     )
-    show_parser.add_argument("id", nargs="?", help="message id (the ID column in list)")
-    show_parser.add_argument("--from", dest="from_number", metavar="NUMBER", help="latest message from this number")
-    _add_format_option(show_parser, SHOW_FORMATS, default="card")
+    view_parser.add_argument("id", nargs="?", help="short id from the ID column in list")
+    view_parser.add_argument("--from", dest="from_number", metavar="NUMBER", help="latest message from this number")
+    _add_format_option(view_parser, SHOW_FORMATS, default="card")
 
     # thread ---------------------------------------------------------------
     thread_parser = subparsers.add_parser(
-        "thread", aliases=["chat"], parents=[common], help="show the full conversation with a number",
-        description="List every message exchanged with a number, oldest first.",
+        "thread", parents=[common], help="work with conversations, one per number",
+        description="List conversations, or view a single one with 'thread view'.",
     )
-    thread_parser.add_argument("number", help="number (the last 8 digits are enough)")
-    _add_format_option(thread_parser, THREAD_FORMATS, default=None)
-
-    # threads --------------------------------------------------------------
-    threads_parser = subparsers.add_parser(
-        "threads", parents=[common], help="summarise conversations by number",
+    thread_sub = thread_parser.add_subparsers(dest="thread_action", metavar="action")
+    thread_list_parser = thread_sub.add_parser(
+        "list", parents=[common], help="summarise conversations by number",
         description="Group all messages by number and show one row per conversation.",
     )
-    threads_parser.add_argument("-n", "--limit", type=int, default=0, metavar="N", help="show only the first N conversations")
-    threads_parser.add_argument("-u", "--unread", action="store_true", help="only conversations with unread messages")
-    _add_format_option(threads_parser, THREADS_FORMATS, default=None)
+    thread_list_parser.add_argument("-n", "--limit", type=int, default=0, metavar="N", help="show only the first N conversations")
+    thread_list_parser.add_argument("-u", "--unread", action="store_true", help="only conversations with unread messages")
+    _add_format_option(thread_list_parser, THREADS_FORMATS, default=None)
+
+    thread_view_parser = thread_sub.add_parser(
+        "view", parents=[common], help="view the full conversation with a number",
+        description="List every message exchanged with a number, oldest first.",
+    )
+    thread_view_parser.add_argument("number", help="number (the last 8 digits are enough)")
+    _add_format_option(thread_view_parser, THREAD_FORMATS, default=None)
 
     # count ----------------------------------------------------------------
     count_parser = subparsers.add_parser(
@@ -160,20 +170,39 @@ def build_parser() -> argparse.ArgumentParser:
 
     # config ---------------------------------------------------------------
     config_parser = subparsers.add_parser(
-        "config", parents=[config_common], help="show or save settings",
+        "config", parents=[common], help="show or save settings",
         description="Settings live in ~/.config/f50-sms/config.json by default (mode 600).",
     )
     config_sub = config_parser.add_subparsers(dest="config_action", metavar="action")
-    config_sub.add_parser("show", parents=[config_common], help="print the settings in effect")
-    config_sub.add_parser("path", parents=[config_common], help="print the config file path")
-    set_parser = config_sub.add_parser("set", parents=[config_common], help="save settings")
-    set_parser.add_argument("--host", metavar="URL", help="router URL")
-    set_parser.add_argument(
-        "--password", metavar="PW", nargs="?", const=PROMPT_PASSWORD,
-        help="router password; omit the value to be prompted (not echoed)",
+    config_sub.add_parser("show", parents=[common], help="print the settings in effect")
+    config_sub.add_parser("path", parents=[common], help="print the config file path")
+    config_sub.add_parser(
+        "set", parents=[common], help="save settings",
+        description="Save --host and --timeout; use 'auth login' for the password.",
     )
-    set_parser.add_argument("--timeout", type=float, metavar="SEC", help="request timeout in seconds")
-    config_sub.add_parser("unset", parents=[config_common], help="delete the config file")
+    config_sub.add_parser("unset", parents=[common], help="delete the config file")
+
+    # auth -----------------------------------------------------------------
+    auth_parser = subparsers.add_parser(
+        "auth", parents=[common], help="manage the router password",
+        description="Store, inspect, or forget the password used when a session expires.",
+    )
+    auth_sub = auth_parser.add_subparsers(dest="auth_action", metavar="action")
+    auth_sub.add_parser(
+        "login", parents=[common], help="verify a password and save it",
+        description=(
+            "Check the password against the router, then store it in the config file. "
+            "Without --password the password is prompted for and not echoed."
+        ),
+    )
+    auth_sub.add_parser(
+        "status", parents=[common], help="show where the password comes from",
+        description="Report the config file, host, password source, and whether a session is live.",
+    )
+    auth_sub.add_parser(
+        "logout", parents=[common], help="forget the stored password",
+        description="Remove the password from the config file, leaving other settings alone.",
+    )
 
     # doctor ---------------------------------------------------------------
     subparsers.add_parser(
@@ -295,8 +324,55 @@ def _looks_like_filters(argv: Sequence[str]) -> bool:
         return False
     first = argv[0]
     if not first.startswith("-"):
-        return first not in COMMANDS
+        return first not in TOP_LEVEL_COMMANDS
     return first.split("=", 1)[0] not in GLOBAL_FLAGS
+
+
+def _normalise_argv(argv: Sequence[str]) -> List[str]:
+    """Expand shorthands and implied commands before argparse sees them.
+
+    Three conveniences, all mirroring how gh reads its own command lines:
+
+    * a bare filter list means `list`
+    * `thread <number>` means `thread view <number>`
+    * a command group with no action falls back to its default action
+    """
+
+    argv = list(argv)
+    if not argv:
+        return ["list"]
+    if _looks_like_filters(argv):
+        return ["list"] + argv
+
+    name = COMMAND_ALIASES.get(argv[0], argv[0])
+    if name != argv[0]:
+        argv = [name] + argv[1:]
+
+    head = argv[0]
+    if head in COMMAND_GROUPS:
+        rest = argv[1:]
+        actions = COMMAND_ACTIONS[head]
+        # "thread 10010" is shorthand for "thread view 10010"
+        if rest and not rest[0].startswith("-") and rest[0] not in actions:
+            if head == "thread":
+                return [head, "view"] + rest
+            raise SystemExitWithMessage(
+                EXIT_USAGE,
+                f"{PROG}: unknown {head} action: {rest[0]} (choose from {', '.join(actions)})",
+            )
+        if not rest or rest[0].startswith("-"):
+            return [head, COMMAND_DEFAULT_ACTION[head]] + rest
+    return argv
+
+
+def _command_key(args: argparse.Namespace) -> str:
+    """Map parsed arguments onto a COMMANDS key such as 'thread view'."""
+
+    name = COMMAND_ALIASES.get(args.command, args.command)
+    if name in COMMAND_GROUPS:
+        action = getattr(args, f"{name}_action", None) or COMMAND_DEFAULT_ACTION[name]
+        return f"{name} {action}"
+    return name
 
 
 def _opt(args: argparse.Namespace, name: str, default: Any = None) -> Any:
@@ -319,11 +395,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
 
-    if not argv:
-        argv = ["list"]
-    elif _looks_like_filters(argv):
-        # f50sms -u / f50sms --search code imply the list subcommand
-        argv = ["list"] + argv
+    try:
+        argv = _normalise_argv(argv)
+    except SystemExitWithMessage as exc:
+        print(exc.message, file=sys.stderr)
+        return exc.code
 
     try:
         args = parser.parse_args(argv)
@@ -347,7 +423,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
 
     client = F50Client(settings.host, password=settings.password, timeout=settings.timeout)
-    handler = COMMANDS[args.command]
+    key = _command_key(args)
+    handler = COMMANDS.get(key)
+    if handler is None:  # pragma: no cover - guarded by the parser
+        print(f"{PROG}: unknown command: {key}", file=sys.stderr)
+        return EXIT_USAGE
     try:
         return handler(client, args, out)
     except F50AuthError as exc:

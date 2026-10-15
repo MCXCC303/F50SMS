@@ -333,6 +333,52 @@ class EndToEndTests(unittest.TestCase):
         code, _, err = run_cli(["list", "--since", "刚才"])
         self.assertEqual(code, F50NotFoundError.exit_code)
 
+    def test_view_without_arguments_shows_the_newest_unread(self):
+        code, out, _ = run_cli(["view", "--color", "never"])
+        self.assertEqual(code, 0)
+        # The fixture's only unread message.
+        self.assertIn("123456", out)
+
+    def test_thread_list(self):
+        code, out, _ = run_cli(["thread", "list", "--color", "never"])
+        self.assertEqual(code, 0)
+        self.assertIn("China Unicom", out)
+
+    def test_thread_view(self):
+        code, out, _ = run_cli(["thread", "view", "10010", "-f", "plain"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.strip().splitlines()), 2)
+
+    def test_auth_status(self):
+        code, out, _ = run_cli(["auth", "status", "--color", "never"])
+        self.assertEqual(code, 0)
+        self.assertIn("Session", out)
+
+    def test_auth_login_saves_the_password(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config.json"
+            code, _, err = run_cli(
+                ["auth", "login", "--password", "s3cret", "--config", str(target)],
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("saved the password", err)
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["password"], "s3cret")
+
+    def test_auth_logout_removes_the_password(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "config.json"
+            target.write_text(json.dumps({"host": "http://x", "password": "p"}), encoding="utf-8")
+            code, _, err = run_cli(["auth", "logout", "--config", str(target)])
+            self.assertEqual(code, 0)
+            self.assertIn("removed", err)
+            stored = json.loads(target.read_text(encoding="utf-8"))
+            self.assertNotIn("password", stored)
+            self.assertEqual(stored["host"], "http://x")
+
     def test_bare_filters_default_to_list(self):
         code, out, _ = run_cli(["-u", "-f", "plain"])
         self.assertEqual(code, 0)
@@ -394,13 +440,71 @@ class GlobalOptionTests(unittest.TestCase):
         with self.assertRaises((SystemExit, cli.SystemExitWithMessage, argparse.ArgumentError)):
             self.parser.parse_args(["count", "--pager", "--no-pager"])
 
-    def test_config_set_password_without_value_prompts(self):
-        args = self.parser.parse_args(["config", "set", "--password"])
-        self.assertIs(args.password, cli.PROMPT_PASSWORD)
+    def test_auth_login_without_password_prompts(self):
+        # No --password means the handler prompts for one.
+        args = self.parser.parse_args(["auth", "login"])
+        self.assertIsNone(args.password)
 
-    def test_config_set_password_with_value(self):
-        args = self.parser.parse_args(["config", "set", "--password", "secret"])
+    def test_auth_login_with_password(self):
+        args = self.parser.parse_args(["auth", "login", "--password", "secret"])
         self.assertEqual(args.password, "secret")
+
+    def test_auth_status_accepts_the_global_password(self):
+        args = self.parser.parse_args(["auth", "status", "--password", "secret"])
+        self.assertEqual(args.password, "secret")
+
+    def test_config_set_no_longer_owns_the_password(self):
+        # It moved to 'auth login'; the global option still needs a value.
+        with self.assertRaises((SystemExit, cli.SystemExitWithMessage, argparse.ArgumentError)):
+            self.parser.parse_args(["config", "set", "--password"])
+
+
+class CommandLayoutTests(unittest.TestCase):
+    """The command tree follows the GitHub CLI: groups plus named actions."""
+
+    def test_bare_filters_become_list(self):
+        self.assertEqual(cli._normalise_argv(["-u"]), ["list", "-u"])
+        self.assertEqual(cli._normalise_argv([]), ["list"])
+
+    def test_group_without_action_uses_its_default(self):
+        self.assertEqual(cli._normalise_argv(["thread"]), ["thread", "list"])
+        self.assertEqual(cli._normalise_argv(["auth"]), ["auth", "status"])
+        self.assertEqual(cli._normalise_argv(["config"]), ["config", "show"])
+
+    def test_group_keeps_an_explicit_action(self):
+        self.assertEqual(cli._normalise_argv(["thread", "view", "10010"]),
+                         ["thread", "view", "10010"])
+
+    def test_group_options_come_after_the_default_action(self):
+        self.assertEqual(cli._normalise_argv(["auth", "--host", "x"]),
+                         ["auth", "status", "--host", "x"])
+
+    def test_thread_number_is_shorthand_for_view(self):
+        self.assertEqual(cli._normalise_argv(["thread", "10010"]),
+                         ["thread", "view", "10010"])
+
+    def test_aliases_expand(self):
+        self.assertEqual(cli._normalise_argv(["show", "57"]), ["view", "57"])
+        self.assertEqual(cli._normalise_argv(["threads"]), ["thread", "list"])
+        self.assertEqual(cli._normalise_argv(["chat", "10010"]),
+                         ["thread", "view", "10010"])
+
+    def test_unknown_group_action_is_reported(self):
+        with self.assertRaises(cli.SystemExitWithMessage):
+            cli._normalise_argv(["auth", "bogus"])
+
+    def test_command_key_resolution(self):
+        parser = cli.build_parser()
+        self.assertEqual(cli._command_key(parser.parse_args(["list"])), "list")
+        self.assertEqual(cli._command_key(parser.parse_args(["view"])), "view")
+        self.assertEqual(cli._command_key(parser.parse_args(["thread", "view", "1"])),
+                         "thread view")
+        self.assertEqual(cli._command_key(parser.parse_args(["auth", "logout"])),
+                         "auth logout")
+
+    def test_every_registered_handler_is_reachable(self):
+        for key in cli.COMMANDS:
+            self.assertTrue(key.split(" ")[0] in cli.TOP_LEVEL_COMMANDS, key)
 
 
 class DefaultCommandTests(unittest.TestCase):

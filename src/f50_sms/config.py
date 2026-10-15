@@ -54,12 +54,25 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     return {k: v for k, v in data.items() if k in KNOWN_KEYS}
 
 
-def save_config(values: Dict[str, Any], path: Optional[str] = None) -> Path:
-    """合并写入配置文件，权限设为 `0600`。"""
+def save_config(
+    values: Dict[str, Any],
+    path: Optional[str] = None,
+    *,
+    replace: bool = False,
+) -> Path:
+    """Write settings to the config file with mode `0600`.
+
+    By default the given keys are merged into whatever is already on disk.
+    Pass `replace=True` to write exactly these keys instead, which is how a
+    key gets removed.
+    """
 
     file_path = config_path(path)
-    current = load_config(str(file_path))
-    current.update({k: v for k, v in values.items() if k in KNOWN_KEYS and v is not None})
+    if replace:
+        current = {k: v for k, v in values.items() if k in KNOWN_KEYS and v is not None}
+    else:
+        current = load_config(str(file_path))
+        current.update({k: v for k, v in values.items() if k in KNOWN_KEYS and v is not None})
     file_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = file_path.with_suffix(file_path.suffix + ".tmp")
     tmp.write_text(json.dumps(current, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
