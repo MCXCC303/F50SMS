@@ -32,6 +32,7 @@ from .constants import (
     prompt_password as _prompt_password,
 )
 from .errors import F50AuthError, F50Error
+from .expressions import SORT_KEYS
 from .output import Output
 
 LIST_FORMATS = ("table", "plain", "json", "jsonl", "csv", "markdown")
@@ -257,6 +258,14 @@ def _add_filter_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--regex", metavar="PATTERN", help="body matches the regular expression")
     parser.add_argument("--since", metavar="TIME", help="start time: 2026-10-01 / 2026-10-01 08:00 / 7d / 24h")
     parser.add_argument("--until", metavar="TIME", help="end time, same formats as --since")
+    parser.add_argument(
+        "--sort", action="append", metavar="KEYS",
+        help="sort keys, most significant first: " + ", ".join(SORT_KEYS) + " (each may take :asc or :desc)",
+    )
+    parser.add_argument(
+        "--filter", metavar="EXPR",
+        help="filter expression, e.g. \"{READ: true, SOURCE: 'China Unicom'}\"",
+    )
     parser.add_argument("-n", "--limit", type=int, default=0, metavar="N", help="show at most N messages (default: all)")
     parser.add_argument("-r", "--reverse", action="store_true", help="oldest first")
     parser.add_argument("--full", action="store_true", help="do not truncate the body")

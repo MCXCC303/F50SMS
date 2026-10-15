@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Sequence
 
 from .errors import F50NotFoundError
+from .expressions import apply_filter, apply_sort, parse_filter, parse_sort
 from .labels import describe_number, normalize_number
 from .models import TAG_ALIASES, TAG_LABELS, Message
 
@@ -148,6 +149,14 @@ def filter_messages(messages: Sequence[Message], args: Any) -> List[Message]:
             m for m in selected
             if (_naive(m.timestamp) or datetime.min) <= threshold
         ]
+
+    conditions = parse_filter(getattr(args, "filter", None))
+    if conditions:
+        selected = apply_filter(selected, conditions)
+
+    terms = parse_sort(getattr(args, "sort", None))
+    if terms:
+        selected = apply_sort(selected, terms)
 
     if getattr(args, "reverse", False):
         selected = list(reversed(selected))
