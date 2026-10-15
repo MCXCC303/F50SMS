@@ -261,5 +261,73 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(code, 5)
 
 
+class FakeTty(io.StringIO):
+    """假装自己是终端。"""
+
+    def isatty(self) -> bool:  # noqa: D102 - 覆盖 StringIO 的实现
+        return True
+
+
+class PagerWiringTests(unittest.TestCase):
+    """Output 应根据模式与内容长度决定是否交给分页器。"""
+
+    @staticmethod
+    def _output(pager_mode: str, stream):
+        args = type("Args", (), {
+            "color": "never", "width": 100, "pager": pager_mode, "quiet": False,
+        })
+        return cli.Output(args, stream=stream)
+
+    def test_auto_pages_when_content_exceeds_screen(self):
+        stream = FakeTty()
+        out = self._output("auto", stream)
+        out.height = 2
+        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+            out.emit("a\nb\nc")
+        run.assert_called_once()
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_auto_skips_short_content(self):
+        stream = FakeTty()
+        out = self._output("auto", stream)
+        out.height = 40
+        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+            out.emit("a\nb")
+        run.assert_not_called()
+        self.assertEqual(stream.getvalue(), "a\nb\n")
+
+    def test_never_disables_paging(self):
+        stream = FakeTty()
+        out = self._output("never", stream)
+        out.height = 1
+        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+            out.emit("a\nb\nc")
+        run.assert_not_called()
+
+    def test_always_forces_paging(self):
+        stream = FakeTty()
+        out = self._output("always", stream)
+        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+            out.emit("a")
+        run.assert_called_once()
+
+    def test_non_tty_never_pages(self):
+        stream = io.StringIO()
+        out = self._output("auto", stream)
+        out.height = 1
+        with mock.patch.object(cli.pager, "run_pager", return_value=True) as run:
+            out.emit("a\nb\nc")
+        run.assert_not_called()
+        self.assertEqual(stream.getvalue(), "a\nb\nc\n")
+
+    def test_falls_back_to_direct_write_when_pager_fails(self):
+        stream = FakeTty()
+        out = self._output("auto", stream)
+        out.height = 1
+        with mock.patch.object(cli.pager, "run_pager", return_value=False):
+            out.emit("a\nb\nc")
+        self.assertEqual(stream.getvalue(), "a\nb\nc\n")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

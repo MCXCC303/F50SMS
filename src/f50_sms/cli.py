@@ -11,10 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
-import shlex
-import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -27,6 +24,7 @@ from .config import config_path, load_config, resolve_settings, save_config
 from .errors import F50Error, F50NotFoundError
 from .labels import classify_number, describe_number, normalize_number
 from .models import TAG_ALIASES, TAG_LABELS, Message
+from . import pager
 from .render import (
     EXPORTERS,
     Cell,
@@ -90,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="彩色输出策略（默认 auto：仅终端）",
     )
     common.add_argument("--width", type=int, metavar="N", help="输出宽度，默认取终端宽度")
-    common.add_argument("--pager", action="store_true", help="用 $PAGER 分页显示")
+    _add_pager_options(common)
     common.add_argument("-q", "--quiet", action="store_true", help="不输出汇总行等提示信息")
     common.add_argument("-v", "--verbose", action="store_true", help="输出调试信息到 stderr")
 
@@ -101,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="彩色输出策略（默认 auto：仅终端）",
     )
     config_common.add_argument("--width", type=int, metavar="N", help="输出宽度，默认取终端宽度")
-    config_common.add_argument("--pager", action="store_true", help="用 $PAGER 分页显示")
+    _add_pager_options(config_common)
     config_common.add_argument("-q", "--quiet", action="store_true", help="不输出汇总行等提示信息")
     config_common.add_argument("-v", "--verbose", action="store_true", help="输出调试信息到 stderr")
 
@@ -211,6 +209,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def _add_pager_options(parser: argparse.ArgumentParser) -> None:
+    """分页选项：默认 auto，做成互斥开关，语义与 gh 一致。"""
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--pager", dest="pager", action="store_const", const="always", default="auto",
+        help="强制用分页器显示（默认内容超过一屏才分页）",
+    )
+    group.add_argument(
+        "--no-pager", dest="pager", action="store_const", const="never",
+        help="关闭分页，直接输出",
+    )
 
 
 def _add_format_option(parser: argparse.ArgumentParser, choices: Sequence[str], default: Optional[str]) -> None:
@@ -429,9 +441,13 @@ def build_threads(messages: Sequence[Message]) -> List[Dict[str, Any]]:
 
 
 class Output:
-    """负责颜色、分页与最终写出。"""
+    """负责颜色、分页与最终写出。
 
-    def __init__(self, args: argparse.Namespace) -> None:
+    分页策略与 `gh` 一致：默认 `auto`，只在标准输出是终端**且**内容
+    超过一屏时才启动分页器；`--pager` 强制分页，`--no-pager` 关闭。
+    """
+
+    def __init__(self, args: argparse.Namespace, *, stream: Any = None) -> None:
         force: Optional[bool]
         if args.color == "always":
             force = True
@@ -439,27 +455,37 @@ class Output:
             force = False
         else:
             force = None
-        self.palette = Palette.auto(sys.stdout, force=force)
+        self.stream = stream if stream is not None else sys.stdout
+        self.palette = Palette.auto(self.stream, force=force)
         self.width = args.width or terminal_width()
-        self.pager = args.pager
+        self.pager_mode = getattr(args, "pager", "auto")
+        self.height = pager.terminal_height()
         self.quiet = args.quiet
 
-    def emit(self, text: str) -> None:
-        if self.pager and sys.stdout.isatty():
-            self._emit_paged(text)
-        else:
-            sys.stdout.write(text if text.endswith("\n") else text + "\n")
+    # -- 输出 --------------------------------------------------------------
 
-    def _emit_paged(self, text: str) -> None:  # pragma: no cover - 依赖外部 pager
-        pager = os.environ.get("PAGER") or "less"
-        command = shlex.split(pager) if pager.strip() else []
-        if command and command[0] == "less" and "-R" not in command:
-            command.append("-R")
+    def emit(self, text: str) -> None:
+        payload = text if text.endswith("\n") else text + "\n"
+        if self._should_page(payload):
+            command = pager.resolve_pager_command()
+            if pager.run_pager(payload, command, stdout=self.stream):
+                return
+        self.stream.write(payload)
+
+    def _should_page(self, payload: str) -> bool:
+        if self.pager_mode == "never":
+            return False
+        if not self._is_tty():
+            return False
+        if self.pager_mode == "always":
+            return True
+        return pager.needs_paging(payload, self.height)
+
+    def _is_tty(self) -> bool:
         try:
-            process = subprocess.Popen(command, stdin=subprocess.PIPE, text=True)
-            process.communicate(text if text.endswith("\n") else text + "\n")
-        except (OSError, ValueError):
-            sys.stdout.write(text if text.endswith("\n") else text + "\n")
+            return bool(self.stream.isatty())
+        except Exception:  # pragma: no cover - 极端环境
+            return False
 
     def note(self, text: str, *, stream: Any = None) -> None:
         if self.quiet:
