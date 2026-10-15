@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import io
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 from f50_sms import commands, notifier
 from f50_sms.models import Message
-from f50_sms.notifier import notification_argv, send
+from f50_sms.notifier import (
+    DEFAULT_ACTION,
+    clipboard_command,
+    copy_to_clipboard,
+    notification_argv,
+    send,
+)
 from f50_sms.output import Output
 from f50_sms.query import message_moment, parse_time_spec, router_now
 
@@ -40,6 +49,8 @@ def notify_args(**overrides) -> argparse.Namespace:
         "since": None,
         "notify_send": "notify-send",
         "dry_run": False,
+        "action_label": "Copy and mark read",
+        "no_action": False,
         "quiet": True,
         "color": "never",
         "width": 100,
@@ -51,6 +62,11 @@ def notify_args(**overrides) -> argparse.Namespace:
 
 def quiet_output() -> Output:
     return Output(notify_args(), stream=io.StringIO())
+
+
+def loud_output() -> Output:
+    """Output that writes notes, which go to stderr rather than the stream."""
+    return Output(notify_args(quiet=False), stream=io.StringIO())
 
 
 class ArgvTests(unittest.TestCase):
@@ -190,3 +206,149 @@ class CommandTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class ActionArgvTests(unittest.TestCase):
+    def test_action_adds_wait_and_the_default_action(self):
+        argv = notification_argv(make(), action_label="Copy and mark read")
+        self.assertIn("--wait", argv)
+        self.assertIn("--action=default=Copy and mark read", argv)
+
+    def test_without_a_label_nothing_changes(self):
+        argv = notification_argv(make())
+        self.assertNotIn("--wait", argv)
+        self.assertFalse(any(part.startswith("--action") for part in argv))
+
+
+class ClipboardTests(unittest.TestCase):
+    def test_detects_an_available_writer(self):
+        found = clipboard_command()
+        self.assertTrue(found is None or isinstance(found, list))
+
+    def test_reports_a_missing_writer(self):
+        problem = copy_to_clipboard("x", command=["definitely-not-here"])
+        self.assertIn("was not found", problem)
+
+    def test_reports_a_failing_writer(self):
+        problem = copy_to_clipboard("x", command=["false"])
+        self.assertIn("exited with status", problem)
+
+    def test_success_is_silent(self):
+        self.assertIsNone(copy_to_clipboard("hello", command=["cat"]))
+
+
+class ClickTests(unittest.TestCase):
+    """Acting on a click: copy the body, then mark the message read."""
+
+    def setUp(self):
+        self.out = loud_output()
+        self.args = notify_args()
+        self.message = make("7", "【示例】点击我")
+
+    def _run_await(self, chosen, waiting=None):
+        with mock.patch.object(commands, "wait_for_action", return_value=chosen), \
+             mock.patch.object(commands, "_copy_and_mark_read") as handler:
+            commands._await_action(self.message, ["notify-send"], self.args, self.out, waiting)
+        return handler
+
+    def test_the_default_action_triggers_copy_and_mark(self):
+        handler = self._run_await(DEFAULT_ACTION)
+        handler.assert_called_once()
+
+    def test_dismissing_does_nothing(self):
+        handler = self._run_await(None)
+        handler.assert_not_called()
+
+    def test_a_different_action_does_nothing(self):
+        handler = self._run_await("other")
+        handler.assert_not_called()
+
+    def test_a_missing_program_is_reported_and_the_slot_freed(self):
+        waiting = threading.Semaphore(1)
+        notes = io.StringIO()
+        with mock.patch.object(commands, "wait_for_action", side_effect=OSError("boom")):
+            with contextlib.redirect_stderr(notes):
+                commands._await_action(self.message, ["x"], self.args, self.out, waiting)
+        # The slot must come back, otherwise the budget leaks on every failure.
+        self.assertTrue(waiting.acquire(blocking=False))
+        self.assertIn("boom", notes.getvalue())
+
+    def test_the_slot_is_released_after_a_click(self):
+        waiting = threading.Semaphore(1)
+        self._run_await(DEFAULT_ACTION, waiting)
+        self.assertTrue(waiting.acquire(blocking=False))
+
+    def test_copy_then_mark_read(self):
+        client = mock.MagicMock()
+        client.__enter__.return_value = client
+        client.message_is_read.return_value = True
+        notes = io.StringIO()
+        with contextlib.redirect_stderr(notes), \
+             mock.patch.object(commands, "copy_to_clipboard", return_value=None) as copy, \
+             mock.patch.object(commands, "F50Client", return_value=client), \
+             mock.patch.object(commands, "resolve_settings") as settings:
+            settings.return_value = mock.Mock(host="http://x", password="p", timeout=1.0)
+            commands._copy_and_mark_read(self.message, self.args, self.out)
+        copy.assert_called_once_with(self.message.content)
+        client.mark_read.assert_called_once_with([self.message.id])
+        self.assertIn("copied", notes.getvalue())
+
+    def test_a_clipboard_failure_still_marks_read(self):
+        client = mock.MagicMock()
+        client.__enter__.return_value = client
+        client.message_is_read.return_value = True
+        notes = io.StringIO()
+        with contextlib.redirect_stderr(notes), \
+             mock.patch.object(commands, "copy_to_clipboard", return_value="no tool"), \
+             mock.patch.object(commands, "F50Client", return_value=client), \
+             mock.patch.object(commands, "resolve_settings") as settings:
+            settings.return_value = mock.Mock(host="http://x", password="p", timeout=1.0)
+            commands._copy_and_mark_read(self.message, self.args, self.out)
+        client.mark_read.assert_called_once()
+        self.assertIn("could not copy", notes.getvalue())
+
+
+class RaiseTests(unittest.TestCase):
+    """How a notification is dispatched, with and without the action."""
+
+    def setUp(self):
+        self.out = loud_output()
+        self.message = make("7", "【示例】内容")
+
+    def test_no_action_sends_without_waiting(self):
+        args = notify_args(no_action=True)
+        with mock.patch.object(commands, "send_notification", return_value=None) as sent, \
+             mock.patch.object(commands, "wait_for_action") as waited:
+            commands._raise_notification(self.message, args, self.out, threading.Semaphore(1))
+        waited.assert_not_called()
+        self.assertFalse(any(p.startswith("--action") for p in sent.call_args[0][0]))
+
+    def test_the_action_path_waits_on_a_worker_thread(self):
+        seen = []
+
+        def fake_wait(argv):
+            seen.append(argv)
+            return None
+
+        with mock.patch.object(commands, "wait_for_action", fake_wait):
+            commands._raise_notification(
+                self.message, notify_args(), self.out, threading.Semaphore(1)
+            )
+            for _ in range(200):
+                if seen:
+                    break
+                time.sleep(0.01)
+        self.assertTrue(seen, "the worker never ran")
+        self.assertIn("--wait", seen[0])
+
+    def test_an_exhausted_budget_drops_the_action_but_still_notifies(self):
+        notes = io.StringIO()
+        with mock.patch.object(commands, "send_notification", return_value=None) as sent:
+            with contextlib.redirect_stderr(notes):
+                commands._raise_notification(
+                    self.message, notify_args(), self.out, threading.Semaphore(0)
+                )
+        sent.assert_called_once()
+        self.assertFalse(any(p.startswith("--action") for p in sent.call_args[0][0]))
+        self.assertIn("no click action", notes.getvalue())
+

@@ -12,6 +12,7 @@ import io
 import json
 import re
 import shlex
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -23,7 +24,13 @@ from .config import config_path, load_config, resolve_settings, save_config
 from .errors import F50Error, F50NotFoundError
 from .labels import normalize_number
 from .models import Message, resolve_ref
-from .notifier import notification_argv, send as send_notification
+from .notifier import (
+    DEFAULT_ACTION,
+    copy_to_clipboard,
+    notification_argv,
+    send as send_notification,
+    wait_for_action,
+)
 from .output import DATA_FORMATS, Output, render_messages, resolve_format as _resolve_format
 from .query import (
     build_threads,
@@ -45,6 +52,11 @@ from .render import (
     to_json,
     truncate,
 )
+
+#: How many notifications may wait for a click at once. Every waiter is a
+#: blocked notify-send process, so a burst must not spawn unbounded ones.
+MAX_WAITING = 8
+
 
 # ---------------------------------------------------------------------------
 # Subcommand handlers
@@ -359,8 +371,9 @@ def cmd_notify(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     }
     out.note(f"watching for new messages to notify (every {interval:g}s, Ctrl-C to stop)...")
 
+    waiting = threading.Semaphore(MAX_WAITING)
     while True:
-        _notify_new(messages, notified, args, out)
+        _notify_new(messages, notified, args, out, waiting)
         if args.once:
             return 0
         time.sleep(interval)
@@ -375,6 +388,7 @@ def _notify_new(
     notified: set,
     args: argparse.Namespace,
     out: Output,
+    waiting: Optional[threading.Semaphore] = None,
 ) -> List[Message]:
     """Notify for messages not yet announced, and record them as announced.
 
@@ -388,7 +402,7 @@ def _notify_new(
     fresh.sort(key=lambda message: message.sort_key)
     for message in fresh:
         notified.add(message.digest)
-        _raise_notification(message, args, out)
+        _raise_notification(message, args, out, waiting)
     return fresh
 
 
@@ -399,19 +413,93 @@ def _reached(message: Message, cutoff: datetime) -> bool:
     return moment is not None and moment >= cutoff
 
 
-def _raise_notification(message: Message, args: argparse.Namespace, out: Output) -> bool:
-    """Show one notification, or print the command under --dry-run."""
+def _raise_notification(
+    message: Message,
+    args: argparse.Namespace,
+    out: Output,
+    waiting: Optional[threading.Semaphore] = None,
+) -> bool:
+    """Show one notification, or print the command under --dry-run.
 
-    argv = notification_argv(message, program=args.notify_send)
+    A clickable notification has to wait for the user, so it runs on a worker
+    thread; otherwise a notification left on screen would stop the polling loop
+    and silently cost us every message that arrives meanwhile.
+    """
+
+    label = None if args.no_action else args.action_label
+    argv = notification_argv(message, program=args.notify_send, action_label=label)
+
     if args.dry_run:
         out.emit(" ".join(shlex.quote(part) for part in argv))
         return True
+
+    if label and waiting is not None and not waiting.acquire(blocking=False):
+        # Each waiter is a blocked process. Show the message regardless, just
+        # without the action, rather than piling up more of them.
+        label = None
+        argv = notification_argv(message, program=args.notify_send, action_label=None)
+        out.note(f"{message.short_id}: no click action, too many notifications waiting")
+
+    if label:
+        threading.Thread(
+            target=_await_action, args=(message, argv, args, out, waiting), daemon=True,
+        ).start()
+        return True
+
     problem = send_notification(argv)
     if problem is None:
         out.note(f"notified {message.short_id} ({sender_label(message)})")
         return True
     out.note(f"could not notify for {message.short_id}: {problem}")
     return False
+
+
+def _await_action(
+    message: Message,
+    argv: List[str],
+    args: argparse.Namespace,
+    out: Output,
+    waiting: Optional[threading.Semaphore],
+) -> None:
+    """Wait for the user to click, then copy the body and mark the message read."""
+
+    try:
+        chosen = wait_for_action(argv)
+    except OSError as exc:
+        out.note(f"could not notify for {message.short_id}: {exc}")
+        return
+    finally:
+        if waiting is not None:
+            waiting.release()
+
+    if chosen == DEFAULT_ACTION:
+        _copy_and_mark_read(message, args, out)
+
+
+def _copy_and_mark_read(message: Message, args: argparse.Namespace, out: Output) -> None:
+    """Click handler: put the body on the clipboard and mark the message read."""
+
+    problem = copy_to_clipboard(message.content or "")
+    if problem is None:
+        out.note(f"copied {message.short_id} to the clipboard")
+    else:
+        out.note(f"could not copy {message.short_id}: {problem}")
+
+    try:
+        settings = resolve_settings(
+            host=_opt(args, "host"),
+            password=_opt(args, "password"),
+            timeout=_opt(args, "timeout"),
+            config_file=getattr(args, "config", None),
+        )
+        # A separate client: the worker must not share the polling thread's
+        # connection, and this one closes when the click is handled.
+        with F50Client(
+            settings.host, password=settings.password, timeout=settings.timeout,
+        ) as client:
+            _mark_read(client, message, out)
+    except F50Error as exc:
+        out.note(f"could not reach the router to mark {message.short_id} as read: {exc}")
 
 
 def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:

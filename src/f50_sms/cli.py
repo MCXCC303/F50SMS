@@ -202,6 +202,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run", action="store_true",
         help="print the command instead of running it",
     )
+    notify_parser.add_argument(
+        "--action-label", default="Copy and mark read", metavar="TEXT",
+        help="label of the click action (default: Copy and mark read)",
+    )
+    notify_parser.add_argument(
+        "--no-action", action="store_true",
+        help="plain notifications: no click action, so nothing to copy or mark",
+    )
 
     # config ---------------------------------------------------------------
     config_parser = subparsers.add_parser(
