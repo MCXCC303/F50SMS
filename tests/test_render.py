@@ -130,7 +130,7 @@ class ExportFormatTests(unittest.TestCase):
         from f50_sms.render import to_csv
         lines = to_csv([make()]).splitlines()
         self.assertEqual(lines[0], "id,time,direction,number,sender,status,content")
-        self.assertTrue(lines[1].startswith("1,2026-10-13 08:30:55 +08:00,in,10010,"))
+        self.assertIn(",2026-10-13 08:30:55 +08:00,in,10010,", lines[1])
 
     def test_markdown_escapes_pipes(self):
         from f50_sms.render import to_markdown

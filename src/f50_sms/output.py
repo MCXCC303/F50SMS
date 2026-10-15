@@ -94,7 +94,7 @@ def render_messages(messages: Sequence[Message], fmt: str, out: Output, *, full:
         lines = []
         for m in messages:
             lines.append("\t".join([
-                m.id,
+                m.short_id,
                 f"{m.timestamp_text} {m.offset_text}".strip(),
                 m.status_label,
                 m.number,

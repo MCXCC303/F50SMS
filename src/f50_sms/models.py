@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 # ---------------------------------------------------------------------------
 # tag 语义
@@ -241,6 +242,42 @@ class Message:
             return None
 
     @property
+    def digest(self) -> str:
+        """Content hash of this message, hex encoded.
+
+        The identity is the number, body, and timestamp -- the same fields git
+        hashes for a blob. It stays stable as long as the message does, which
+        makes it a better handle than the router's own counter.
+        """
+
+        parts = chr(0).join([
+            self.number or "",
+            self.content or "",
+            self.raw_date or (self.timestamp.isoformat() if self.timestamp else ""),
+        ])
+        return hashlib.sha1(parts.encode("utf-8")).hexdigest()
+
+    @property
+    def short_id(self, length: int = 7) -> str:
+        """Short hash handle, git-object style (default 7 hex chars)."""
+
+        return self.digest[:length]
+
+    def matches_ref(self, ref: str) -> bool:
+        """Whether a user-supplied reference points at this message.
+
+        Accepts the short hash, any prefix of it, the router's numeric id, and
+        the display form with a leading hash sign.
+        """
+
+        needle = (ref or "").strip().lstrip("#").lower()
+        if not needle:
+            return False
+        if needle == self.id.lower():
+            return True
+        return self.digest.startswith(needle)
+
+    @property
     def sort_key(self):
         return (self.numeric_id if self.numeric_id is not None else -1,
                 self.timestamp.timestamp() if self.timestamp else 0.0)
@@ -264,6 +301,7 @@ class Message:
     def to_dict(self, *, include_raw: bool = False) -> Dict[str, Any]:
         data: Dict[str, Any] = {
             "id": self.id,
+            "short_id": self.short_id,
             "number": self.number,
             "content": self.content,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
@@ -309,3 +347,17 @@ def merge_messages(items: list[dict]) -> list[Message]:
     messages = [Message.from_api(merged[mid]) for mid in order]
     messages.sort(key=lambda m: m.sort_key, reverse=True)
     return messages
+
+
+def resolve_ref(messages: Sequence[Message], ref: str) -> List[Message]:
+    """Return every message a reference resolves to.
+
+    A reference is a short hash, a hash prefix, or the router's numeric id.
+    More than one hit means the prefix was ambiguous, so the caller can list
+    the candidates the way git does for a short ref.
+    """
+
+    needle = (ref or "").strip()
+    if not needle:
+        return []
+    return [m for m in messages if m.matches_ref(needle)]

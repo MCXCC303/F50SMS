@@ -280,7 +280,7 @@ def render_message_table(
     for message in messages:
         content = message.content if full else _clip(message.content, content_width)
         rows.append([
-            Cell(message.id, palette.dim),
+            Cell(message.short_id, palette.dim),
             Cell(message.timestamp_text or message.raw_date, None),
             Cell(truncate(sender_label(message), 12), None),
             Cell(truncate(message.number, 14), None),
@@ -318,7 +318,7 @@ def render_message_card(message: Message, *, palette: Optional[Palette] = None, 
         rows.append(("Note", "long SMS not fully received"))
 
     label_width = max(text_width(label) for label, _ in rows) + 2
-    title = f"#{message.id}" if message.id else "Message"
+    title = f"#{message.short_id}" if message.id else "Message"
     dashes = max(0, inner - text_width(title) - 1)
     top = "╭─ " + palette.bold(title) + " " + "─" * dashes + "╮"
     bottom = "╰" + "─" * (inner + 2) + "╯"
@@ -429,7 +429,7 @@ def to_csv(messages: Sequence[Message]) -> str:
     writer.writerow(["id", "time", "direction", "number", "sender", "status", "content"])
     for m in messages:
         writer.writerow([
-            m.id,
+            m.short_id,
             f"{m.timestamp_text} {m.offset_text}".strip(),
             "out" if m.is_outgoing else "in",
             m.number,
@@ -449,7 +449,7 @@ def to_markdown(messages: Sequence[Message], *, title: str = "F50 SMS export") -
     for m in messages:
         content = m.content.replace("|", "\\|").replace("\n", " ")
         lines.append(
-            f"| {m.id} | {m.timestamp_text} | {'sent' if m.is_outgoing else 'received'} "
+            f"| {m.short_id} | {m.timestamp_text} | {'sent' if m.is_outgoing else 'received'} "
             f"| {m.number} | {sender_label(m)} | {m.status_label} | {content} |"
         )
     return "\n".join(lines)
@@ -458,7 +458,7 @@ def to_markdown(messages: Sequence[Message], *, title: str = "F50 SMS export") -
 def to_text(messages: Sequence[Message]) -> str:
     blocks: List[str] = []
     for m in messages:
-        head = f"[{m.id}] {m.timestamp_text} {m.status_label} {m.number}"
+        head = f"[{m.short_id}] {m.timestamp_text} {m.status_label} {m.number}"
         sender = sender_label(m)
         if sender:
             head += f" ({sender})"

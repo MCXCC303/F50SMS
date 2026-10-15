@@ -20,7 +20,7 @@ from .client import F50Client
 from .config import config_path, load_config, resolve_settings, save_config
 from .errors import F50Error, F50NotFoundError
 from .labels import normalize_number
-from .models import Message
+from .models import Message, resolve_ref
 from .output import DATA_FORMATS, Output, render_messages, resolve_format as _resolve_format
 from .query import build_threads, filter_messages
 from .render import (
@@ -72,16 +72,19 @@ def cmd_show(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     messages = _load_messages(client, args)
     target: Optional[Message] = None
     if args.id:
-        wanted = str(args.id).strip().lstrip("#")
-        for message in messages:
-            if message.id == wanted:
-                target = message
-                break
-        if target is None:
+        hits = resolve_ref(messages, str(args.id))
+        if not hits:
             raise F50NotFoundError(
-                f"no message with id {args.id}.",
-                hint="run f50sms list to see available ids.",
+                f"no message matching {args.id}.",
+                hint="run f50sms list to see the available ids.",
             )
+        if len(hits) > 1:
+            candidates = ", ".join(m.short_id for m in hits[:8])
+            raise F50NotFoundError(
+                f"{args.id} is ambiguous: it matches {len(hits)} messages ({candidates}).",
+                hint="use more characters of the id to disambiguate.",
+            )
+        target = hits[0]
     else:
         tail = re.sub(r"\D", "", args.from_number)[-8:]
         candidates = [m for m in messages if re.sub(r"\D", "", m.number).endswith(tail)]
@@ -104,7 +107,7 @@ def messages_plain(messages: Sequence[Message]) -> str:
     lines = []
     for m in messages:
         lines.append("\t".join([
-            m.id, f"{m.timestamp_text} {m.offset_text}".strip(), m.status_label,
+            m.short_id, f"{m.timestamp_text} {m.offset_text}".strip(), m.status_label,
             m.number, sender_label(m), " ".join((m.content or "").split()),
         ]))
     return "\n".join(lines)
