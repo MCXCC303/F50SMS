@@ -85,11 +85,20 @@ def resolve_format(args: Any, requested: Optional[str], human_default: str) -> s
     return "plain" if human_default in ("table", "card", "chat") else human_default
 
 
-def render_messages(messages: Sequence[Message], fmt: str, out: Output, *, full: bool = False) -> str:
+def render_messages(
+    messages: Sequence[Message],
+    fmt: str,
+    out: Output,
+    *,
+    full: bool = False,
+    time_style: str = "relative",
+) -> str:
     """Render a list of messages in the requested format."""
 
     if fmt == "table":
-        return render_message_table(messages, palette=out.palette, width=out.width, full=full)
+        return render_message_table(
+            messages, palette=out.palette, width=out.width, full=full, time_style=time_style,
+        )
     if fmt == "plain":
         lines = []
         for m in messages:

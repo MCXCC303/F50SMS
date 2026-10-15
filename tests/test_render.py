@@ -90,6 +90,15 @@ class TableTests(unittest.TestCase):
         text = render_table(["c"], [["x" * 50]], max_widths=[5], palette=Palette(False))
         self.assertLessEqual(text_width(text.splitlines()[-1]), 6)
 
+    def test_column_is_never_narrower_than_its_header(self):
+        # A max width below the header width would otherwise let the header
+        # overflow its column and push the rule and the data out of line.
+        text = render_table(["STATE"], [["unread"]], max_widths=[4], palette=Palette(False))
+        header, rule, data = text.splitlines()
+        self.assertEqual(text_width(header), text_width(rule))
+        self.assertEqual(text_width(rule), text_width(data))
+        self.assertEqual(text_width(header), text_width("STATE"))
+
 
 class MessageTableTests(unittest.TestCase):
     def test_render_without_colour(self):
@@ -109,6 +118,47 @@ class MessageTableTests(unittest.TestCase):
     def test_card_wraps_long_content(self):
         card = render_message_card(make(content="很长的内容" * 40), palette=Palette(False), width=60)
         self.assertGreater(len(card.splitlines()), 6)
+
+
+class GhStyleHeaderTests(unittest.TestCase):
+    """The list header mimics the GitHub CLI: uppercase, underlined per column."""
+
+    @staticmethod
+    def _columns(line):
+        return [part for part in line.split("  ") if part]
+
+    def test_header_is_uppercase(self):
+        out = render_message_table([make()], palette=Palette(False), width=120)
+        header = out.splitlines()[0]
+        for name in ("ID", "TIME", "SOURCE", "NUMBER", "STATE", "TEXT"):
+            self.assertIn(name, header)
+
+    def test_underline_matches_each_column_width(self):
+        out = render_message_table([make()], palette=Palette(False), width=120)
+        header, rule = out.splitlines()[0], out.splitlines()[1]
+        header_columns = self._columns(header)
+        rule_columns = self._columns(rule)
+        self.assertEqual(len(header_columns), len(rule_columns))
+        for head, line in zip(header_columns, rule_columns):
+            self.assertEqual(set(line), {"\u2500"}, f"underline should be a rule: {line!r}")
+            self.assertGreaterEqual(text_width(line), text_width(head))
+
+    def test_short_id_column_carries_a_hash_prefix(self):
+        out = render_message_table([make()], palette=Palette(False), width=120)
+        row = out.splitlines()[2]
+        self.assertTrue(row.startswith("#"))
+
+    def test_relative_time_by_default(self):
+        message = make()
+        out = render_message_table([message], palette=Palette(False), width=120)
+        self.assertIn("ago", out)
+        self.assertNotIn("2026-10-13 08:30:55", out)
+
+    def test_absolute_time_on_request(self):
+        out = render_message_table(
+            [make()], palette=Palette(False), width=120, time_style="absolute",
+        )
+        self.assertIn("2026-10-13 08:30:55", out)
 
 
 class SummaryTests(unittest.TestCase):

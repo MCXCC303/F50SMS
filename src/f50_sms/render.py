@@ -16,6 +16,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
+from .humanize import humanize_delta
 from .labels import classify_number, describe_number
 from .models import Message
 
@@ -206,17 +207,29 @@ def render_table(
     aligns = list(aligns or ["left"] * len(headers))
     cells_rows = [[_as_cell(c) for c in row] for row in rows]
 
-    widths = [text_width(h) for h in headers]
+    header_widths = [text_width(h) for h in headers]
+    # A column is never narrower than its own header, otherwise the header row,
+    # the rule, and the data would disagree about where the column ends.
+    limits: List[Optional[int]] = list(max_widths or [])
+    limits += [None] * (len(header_widths) - len(limits))
+    limits = [
+        None if limit is None else max(limit, header_widths[i])
+        for i, limit in enumerate(limits)
+    ]
+
+    widths = list(header_widths)
     for row in cells_rows:
         for index, cell in enumerate(row):
             if index >= len(widths):
                 continue
-            if max_widths and max_widths[index] is not None:
-                cell.text = truncate(cell.text, max_widths[index])
+            if limits[index] is not None:
+                cell.text = truncate(cell.text, limits[index])
             widths[index] = max(widths[index], text_width(cell.text))
-    if max_widths:
-        limits = list(max_widths) + [None] * (len(widths) - len(max_widths))
-        widths = [min(width, mw) if mw else width for width, mw in zip(widths, limits)]
+    if any(limit is not None for limit in limits):
+        widths = [
+            min(width, limits[i]) if limits[i] is not None else width
+            for i, width in enumerate(widths)
+        ]
 
     out: List[str] = []
     if header_line:
@@ -264,14 +277,16 @@ def render_message_table(
     palette: Optional[Palette] = None,
     width: Optional[int] = None,
     full: bool = False,
+    time_style: str = "relative",
 ) -> str:
-    """短信列表表格。"""
+    """The message list table, with a gh-style uppercase header."""
 
     palette = palette or Palette(False)
     total_width = width or terminal_width()
 
     headers = ["ID", "TIME", "SOURCE", "NUMBER", "STATE", "TEXT"]
-    fixed = 2 + 19 + 2 + 12 + 2 + 14 + 2 + 4 + 2 + 4
+    time_width = 19 if time_style == "absolute" else 22
+    fixed = 2 + time_width + 2 + 12 + 2 + 14 + 2 + 4 + 2 + 4
     content_width = max(12, total_width - fixed)
     if full:
         content_width = 0
@@ -279,9 +294,13 @@ def render_message_table(
     rows: List[List[Any]] = []
     for message in messages:
         content = message.content if full else _clip(message.content, content_width)
+        if time_style == "absolute":
+            when = message.timestamp_text or message.raw_date
+        else:
+            when = humanize_delta(message.timestamp) or message.raw_date
         rows.append([
-            Cell(message.short_id, palette.dim),
-            Cell(message.timestamp_text or message.raw_date, None),
+            Cell("#" + message.short_id, palette.dim),
+            Cell(when, None),
             Cell(truncate(sender_label(message), 12), None),
             Cell(truncate(message.number, 14), None),
             Cell(message.status_label, lambda text, m=message: status_style(m, palette)),
@@ -289,7 +308,7 @@ def render_message_table(
         ])
 
     aligns = ["right", "left", "left", "left", "left", "left"]
-    max_widths: List[Optional[int]] = [None, 19, 12, 14, 4, content_width or None]
+    max_widths: List[Optional[int]] = [None, time_width, 12, 14, None, content_width or None]
     return render_table(
         headers,
         rows,

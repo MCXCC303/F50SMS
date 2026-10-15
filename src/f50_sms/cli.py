@@ -266,6 +266,10 @@ def _add_filter_options(parser: argparse.ArgumentParser) -> None:
         "--filter", metavar="EXPR",
         help="filter expression, e.g. \"{READ: true, SOURCE: 'China Unicom'}\"",
     )
+    parser.add_argument(
+        "--time", choices=("relative", "absolute"), default=None,
+        help="how to show times in the table (default: relative)",
+    )
     parser.add_argument("-n", "--limit", type=int, default=0, metavar="N", help="show at most N messages (default: all)")
     parser.add_argument("-r", "--reverse", action="store_true", help="oldest first")
     parser.add_argument("--full", action="store_true", help="do not truncate the body")

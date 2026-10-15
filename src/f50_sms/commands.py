@@ -47,6 +47,12 @@ def _opt(args: argparse.Namespace, name: str, default: Any = None) -> Any:
 
     return getattr(args, name, default)
 
+def _time_style(args: argparse.Namespace) -> str:
+    """List output shows relative times by default, like the GitHub CLI."""
+
+    return getattr(args, "time", None) or "relative"
+
+
 def _load_messages(client: F50Client, args: argparse.Namespace) -> List[Message]:
     return client.fetch_messages()
 
@@ -60,7 +66,9 @@ def cmd_list(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         else:
             out.note("no messages matched.")
         return 0
-    out.emit(render_messages(messages, fmt, out, full=args.full))
+    out.emit(render_messages(
+        messages, fmt, out, full=args.full, time_style=_time_style(args),
+    ))
     if fmt not in DATA_FORMATS and not args.quiet:
         out.note(render_summary(summarize(messages), palette=out.palette))
     return 0
