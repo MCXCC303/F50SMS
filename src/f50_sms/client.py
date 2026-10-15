@@ -369,6 +369,9 @@ class F50Client:
 
         try:
             info = self._raw_get("loginfo", {"multi_data": "1"})
+        except F50ConnectionError:
+            # 网络不通要让调用方看到真实原因，不能退化成「缺少密码」。
+            raise
         except F50Error:
             return None
         value = info.get("loginfo")

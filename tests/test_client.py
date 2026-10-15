@@ -11,7 +11,7 @@ import unittest
 from typing import Any, Dict, List, Mapping, Optional
 
 from f50_sms.client import F50Client, expected_keys, sha256_upper
-from f50_sms.errors import F50AuthError, F50ProtocolError
+from f50_sms.errors import F50AuthError, F50ConnectionError, F50ProtocolError
 
 
 def b64(text: str) -> str:
@@ -314,6 +314,14 @@ class MiscTests(unittest.TestCase):
         router = FakeRouter(session=False, password=None)
         self.assertFalse(router.check_login())
         self.assertEqual(router.login_attempts, 0)
+
+    def test_connection_error_is_not_reported_as_missing_password(self):
+        class Offline(F50Client):
+            def _request_json(self, *args, **kwargs):
+                raise F50ConnectionError("connection refused")
+
+        with self.assertRaises(F50ConnectionError):
+            Offline("http://192.0.2.1").fetch_messages()
 
 
 if __name__ == "__main__":  # pragma: no cover
