@@ -318,7 +318,8 @@ class RaiseTests(unittest.TestCase):
     def test_no_action_sends_without_waiting(self):
         args = notify_args(no_action=True)
         with mock.patch.object(commands, "send_notification", return_value=None) as sent, \
-             mock.patch.object(commands, "wait_for_action") as waited:
+             mock.patch.object(commands, "wait_for_action") as waited, \
+             contextlib.redirect_stderr(io.StringIO()):
             commands._raise_notification(self.message, args, self.out, threading.Semaphore(1))
         waited.assert_not_called()
         self.assertFalse(any(p.startswith("--action") for p in sent.call_args[0][0]))
@@ -351,4 +352,72 @@ class RaiseTests(unittest.TestCase):
         sent.assert_called_once()
         self.assertFalse(any(p.startswith("--action") for p in sent.call_args[0][0]))
         self.assertIn("no click action", notes.getvalue())
+
+
+
+class WaiterDrainTests(unittest.TestCase):
+    """Exiting must not strand a popup that nobody is listening to."""
+
+    def setUp(self):
+        self.out = loud_output()
+
+    def test_nothing_pending_returns_at_once(self):
+        notes = io.StringIO()
+        with contextlib.redirect_stderr(notes):
+            commands._finish_waiters([], self.out)
+        self.assertEqual(notes.getvalue(), "")
+
+    def test_finished_workers_are_ignored(self):
+        worker = threading.Thread(target=lambda: None)
+        worker.start()
+        worker.join()
+        notes = io.StringIO()
+        with contextlib.redirect_stderr(notes):
+            commands._finish_waiters([worker], self.out)
+        self.assertEqual(notes.getvalue(), "")
+
+    def test_a_live_worker_is_waited_for_and_reported(self):
+        release = threading.Event()
+        worker = threading.Thread(target=release.wait)
+        worker.start()
+        notes = io.StringIO()
+
+        def free_it():
+            time.sleep(0.2)
+            release.set()
+
+        threading.Thread(target=free_it, daemon=True).start()
+        start = time.time()
+        with contextlib.redirect_stderr(notes):
+            commands._finish_waiters([worker], self.out)
+        self.assertFalse(worker.is_alive())
+        self.assertGreaterEqual(time.time() - start, 0.15)
+        self.assertIn("waiting for 1 notification", notes.getvalue())
+
+    def test_the_worker_is_recorded_for_later_draining(self):
+        seen = []
+
+        def fake_wait(argv):
+            seen.append(argv)
+            return None
+
+        pending = []
+        with mock.patch.object(commands, "wait_for_action", fake_wait):
+            commands._raise_notification(
+                make("9", "【示例】x"), notify_args(), self.out,
+                threading.Semaphore(1), pending,
+            )
+            self.assertEqual(len(pending), 1)
+            pending[0].join(timeout=5)
+        self.assertTrue(seen, "the worker never ran")
+
+    def test_no_action_records_nothing_to_wait_for(self):
+        pending = []
+        with mock.patch.object(commands, "send_notification", return_value=None), \
+             contextlib.redirect_stderr(io.StringIO()):
+            commands._raise_notification(
+                make("9", "【示例】x"), notify_args(no_action=True), self.out,
+                threading.Semaphore(1), pending,
+            )
+        self.assertEqual(pending, [])
 

@@ -372,15 +372,40 @@ def cmd_notify(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     out.note(f"watching for new messages to notify (every {interval:g}s, Ctrl-C to stop)...")
 
     waiting = threading.Semaphore(MAX_WAITING)
-    while True:
-        _notify_new(messages, notified, args, out, waiting)
-        if args.once:
-            return 0
-        time.sleep(interval)
-        try:
-            messages = _load_messages(client, args)
-        except F50Error as exc:
-            out.note(f"read failed: {exc}")
+    pending: List[threading.Thread] = []
+    try:
+        while True:
+            _notify_new(messages, notified, args, out, waiting, pending)
+            if args.once:
+                _finish_waiters(pending, out)
+                return 0
+            time.sleep(interval)
+            pending[:] = [worker for worker in pending if worker.is_alive()]
+            try:
+                messages = _load_messages(client, args)
+            except F50Error as exc:
+                out.note(f"read failed: {exc}")
+    except KeyboardInterrupt:
+        # Stopping the daemon should not strand clickable popups: let the ones
+        # already on screen finish first. A second Ctrl-C breaks out of this.
+        _finish_waiters(pending, out)
+        return 0
+
+
+def _finish_waiters(pending: Sequence[threading.Thread], out: Output) -> None:
+    """Stay alive until the notifications we raised have been dealt with.
+
+    A clickable notification is only clickable while something is reading
+    notify-send's output. Exiting first leaves the popup sitting on screen with
+    nobody listening, so clicking it would silently do nothing.
+    """
+
+    live = [worker for worker in pending if worker.is_alive()]
+    if not live:
+        return
+    out.note(f"waiting for {len(live)} notification(s) to be clicked or dismissed...")
+    for worker in live:
+        worker.join()
 
 
 def _notify_new(
@@ -389,6 +414,7 @@ def _notify_new(
     args: argparse.Namespace,
     out: Output,
     waiting: Optional[threading.Semaphore] = None,
+    pending: Optional[List[threading.Thread]] = None,
 ) -> List[Message]:
     """Notify for messages not yet announced, and record them as announced.
 
@@ -402,7 +428,7 @@ def _notify_new(
     fresh.sort(key=lambda message: message.sort_key)
     for message in fresh:
         notified.add(message.digest)
-        _raise_notification(message, args, out, waiting)
+        _raise_notification(message, args, out, waiting, pending)
     return fresh
 
 
@@ -418,6 +444,7 @@ def _raise_notification(
     args: argparse.Namespace,
     out: Output,
     waiting: Optional[threading.Semaphore] = None,
+    pending: Optional[List[threading.Thread]] = None,
 ) -> bool:
     """Show one notification, or print the command under --dry-run.
 
@@ -441,9 +468,12 @@ def _raise_notification(
         out.note(f"{message.short_id}: no click action, too many notifications waiting")
 
     if label:
-        threading.Thread(
+        worker = threading.Thread(
             target=_await_action, args=(message, argv, args, out, waiting), daemon=True,
-        ).start()
+        )
+        worker.start()
+        if pending is not None:
+            pending.append(worker)
         return True
 
     problem = send_notification(argv)
