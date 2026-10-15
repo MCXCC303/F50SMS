@@ -1,6 +1,9 @@
 """本工具可能抛出的异常类型。
 
 所有异常都继承自 :class:`F50Error`，CLI 只需捕获这一个基类即可给出友好提示。
+
+退出码约定：`0` 成功，`2` 命令行用法错误（沿用 argparse 的约定），
+其余从 `3` 起按下面的类依次排列，互不重叠。
 """
 
 from __future__ import annotations
@@ -25,7 +28,7 @@ class F50Error(Exception):
 class F50ConnectionError(F50Error):
     """无法连接到路由器（网络不可达、超时、DNS 失败等）。"""
 
-    exit_code = 2
+    exit_code = 3
 
 
 class F50AuthError(F50Error):
@@ -35,7 +38,7 @@ class F50AuthError(F50Error):
     密码并自动重试，而不是直接报错退出。
     """
 
-    exit_code = 3
+    exit_code = 4
 
     def __init__(self, message: str, *, hint: str | None = None, needs_password: bool = False) -> None:
         super().__init__(message, hint=hint)
@@ -45,10 +48,10 @@ class F50AuthError(F50Error):
 class F50ProtocolError(F50Error):
     """路由器返回了无法解析或不符合预期的数据。"""
 
-    exit_code = 4
+    exit_code = 5
 
 
 class F50NotFoundError(F50Error):
     """没有找到符合条件的本地查询结果（例如指定的短信 ID）。"""
 
-    exit_code = 5
+    exit_code = 6

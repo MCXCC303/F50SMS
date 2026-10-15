@@ -53,6 +53,9 @@ PROG = "f50sms"
 #: `config set --password` 不带值时的占位符，表示「请提示我输入」。
 PROMPT_PASSWORD = object()
 
+#: 命令行用法错误的退出码，沿用 argparse 的约定；与业务错误码错开。
+EXIT_USAGE = 2
+
 LIST_FORMATS = ("table", "plain", "json", "jsonl", "csv", "markdown")
 SHOW_FORMATS = ("card", "plain", "json")
 THREAD_FORMATS = ("chat", "table", "plain", "json", "jsonl", "csv", "markdown")
@@ -72,7 +75,7 @@ class _Parser(argparse.ArgumentParser):
 
     def error(self, message: str):  # pragma: no cover - argparse 内部调用
         self.print_usage(sys.stderr)
-        raise SystemExitWithMessage(2, f"{PROG}: 参数错误：{message}")
+        raise SystemExitWithMessage(EXIT_USAGE, f"{PROG}: 参数错误：{message}")
 
 
 class SystemExitWithMessage(Exception):
@@ -977,7 +980,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return exc.code
     except argparse.ArgumentError as exc:  # 互斥选项冲突等
         print(f"{PROG}: 参数错误：{exc}", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
 
     if not getattr(args, "command", None):
         parser.print_help()

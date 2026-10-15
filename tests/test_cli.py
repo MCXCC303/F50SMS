@@ -13,6 +13,13 @@ from unittest import mock
 
 from f50_sms import cli
 from f50_sms.client import F50Client
+from f50_sms.errors import (
+    F50AuthError,
+    F50ConnectionError,
+    F50Error,
+    F50NotFoundError,
+    F50ProtocolError,
+)
 from f50_sms.labels import classify_number, describe_number, normalize_number
 from f50_sms.models import Message
 
@@ -130,13 +137,13 @@ class PasswordPromptTests(unittest.TestCase):
 
     def test_blank_password_aborts(self):
         code, _, err, client, _ = self._run(prompt_available=True, secret="")
-        self.assertEqual(code, 3)
+        self.assertEqual(code, F50AuthError.exit_code)
         self.assertIsNone(client.accepted_password)
         self.assertIn("已取消", err)
 
     def test_no_terminal_reports_instead_of_hanging(self):
         code, _, err, _, prompt = self._run(prompt_available=False, secret="hunter2")
-        self.assertEqual(code, 3)
+        self.assertEqual(code, F50AuthError.exit_code)
         prompt.assert_not_called()
         self.assertIn("没有提供密码", err)
 
@@ -287,7 +294,7 @@ class EndToEndTests(unittest.TestCase):
 
     def test_show_missing_id(self):
         code, _, err = run_cli(["show", "999"])
-        self.assertEqual(code, 5)
+        self.assertEqual(code, F50NotFoundError.exit_code)
         self.assertIn("999", err)
 
     def test_thread(self):
@@ -324,12 +331,32 @@ class EndToEndTests(unittest.TestCase):
 
     def test_bad_time_spec_exits_nonzero(self):
         code, _, err = run_cli(["list", "--since", "刚才"])
-        self.assertEqual(code, 5)
+        self.assertEqual(code, F50NotFoundError.exit_code)
 
     def test_bare_filters_default_to_list(self):
         code, out, _ = run_cli(["-u", "-f", "plain"])
         self.assertEqual(code, 0)
         self.assertEqual(len(out.strip().splitlines()), 1)
+
+
+class ExitCodeTests(unittest.TestCase):
+    """退出码必须互不重叠，否则脚本没法区分失败原因。"""
+
+    def test_codes_are_distinct(self):
+        codes = [
+            F50Error.exit_code,
+            cli.EXIT_USAGE,
+            F50ConnectionError.exit_code,
+            F50AuthError.exit_code,
+            F50ProtocolError.exit_code,
+            F50NotFoundError.exit_code,
+        ]
+        self.assertEqual(len(codes), len(set(codes)), codes)
+        self.assertNotIn(0, codes)
+
+    def test_usage_error_uses_its_own_code(self):
+        code, _, _ = run_cli(["list", "--definitely-not-a-flag"])
+        self.assertEqual(code, cli.EXIT_USAGE)
 
 
 class GlobalOptionTests(unittest.TestCase):
