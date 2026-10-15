@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 本地配置与导出（可能包含隐私短信）
+config.local.json
+*.local.json
+sms.json
+sms.csv
+sms.md
+unread.jsonl
+exports/
+
+# 逆向时抓下来的路由器静态资源，不随仓库分发
+recon/
+
+# 编辑器
+.idea/
+.vscode/
+*.swp
+.DS_Store
