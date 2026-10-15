@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import io
 import json
@@ -324,6 +325,72 @@ class EndToEndTests(unittest.TestCase):
     def test_bad_time_spec_exits_nonzero(self):
         code, _, err = run_cli(["list", "--since", "刚才"])
         self.assertEqual(code, 5)
+
+    def test_bare_filters_default_to_list(self):
+        code, out, _ = run_cli(["-u", "-f", "plain"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(out.strip().splitlines()), 1)
+
+
+class GlobalOptionTests(unittest.TestCase):
+    """全局选项写在子命令前面或后面都应生效。"""
+
+    def setUp(self):
+        self.parser = cli.build_parser()
+
+    def test_before_subcommand(self):
+        args = self.parser.parse_args(["--password", "x", "count"])
+        self.assertEqual(args.command, "count")
+        self.assertEqual(args.password, "x")
+
+    def test_after_subcommand(self):
+        args = self.parser.parse_args(["count", "--password", "x"])
+        self.assertEqual(args.password, "x")
+
+    def test_later_value_wins(self):
+        args = self.parser.parse_args(["--password", "a", "count", "--password", "b"])
+        self.assertEqual(args.password, "b")
+
+    def test_unset_options_keep_root_defaults(self):
+        args = self.parser.parse_args(["count"])
+        self.assertEqual(args.color, "auto")
+        self.assertEqual(args.pager, "auto")
+        self.assertFalse(args.quiet)
+        self.assertIsNone(args.host)
+        self.assertIsNone(args.password)
+
+    def test_equals_form(self):
+        args = self.parser.parse_args(["--host=http://10.0.0.1", "count"])
+        self.assertEqual(args.host, "http://10.0.0.1")
+
+    def test_pager_flags_conflict(self):
+        with self.assertRaises((SystemExit, cli.SystemExitWithMessage, argparse.ArgumentError)):
+            self.parser.parse_args(["count", "--pager", "--no-pager"])
+
+    def test_config_set_password_without_value_prompts(self):
+        args = self.parser.parse_args(["config", "set", "--password"])
+        self.assertIs(args.password, cli.PROMPT_PASSWORD)
+
+    def test_config_set_password_with_value(self):
+        args = self.parser.parse_args(["config", "set", "--password", "secret"])
+        self.assertEqual(args.password, "secret")
+
+
+class DefaultCommandTests(unittest.TestCase):
+    def test_filters_are_treated_as_list(self):
+        self.assertTrue(cli._looks_like_filters(["-u"]))
+        self.assertTrue(cli._looks_like_filters(["--search", "验证码"]))
+        self.assertTrue(cli._looks_like_filters(["-n", "5"]))
+
+    def test_global_flags_keep_their_meaning(self):
+        self.assertFalse(cli._looks_like_filters(["--help"]))
+        self.assertFalse(cli._looks_like_filters(["--version"]))
+        self.assertFalse(cli._looks_like_filters(["--host", "x", "count"]))
+        self.assertFalse(cli._looks_like_filters(["--color=never", "count"]))
+
+    def test_subcommands_are_not_rewritten(self):
+        self.assertFalse(cli._looks_like_filters(["show", "57"]))
+        self.assertFalse(cli._looks_like_filters(["doctor"]))
 
 
 class FakeTty(io.StringIO):

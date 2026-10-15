@@ -83,32 +83,13 @@ class SystemExitWithMessage(Exception):
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # 子命令也挂一份全局选项，但默认值用 SUPPRESS：写了的生效，没写的不会
+    # 把根解析器已经解析出来的值覆盖成 None。
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument("--host", metavar="URL", help="路由器后台地址（默认 http://192.168.0.1）")
-    common.add_argument("--password", metavar="PW", help="后台密码（只读通常不需要）")
-    common.add_argument("--timeout", type=float, metavar="SEC", help="请求超时秒数（默认 10）")
-    common.add_argument("--config", metavar="FILE", help="配置文件路径")
-    common.add_argument(
-        "--color",
-        choices=("auto", "always", "never"),
-        default="auto",
-        help="彩色输出策略（默认 auto：仅终端）",
-    )
-    common.add_argument("--width", type=int, metavar="N", help="输出宽度，默认取终端宽度")
-    _add_pager_options(common)
-    common.add_argument("-q", "--quiet", action="store_true", help="不输出汇总行等提示信息")
-    common.add_argument("-v", "--verbose", action="store_true", help="输出调试信息到 stderr")
+    _add_global_options(common, suppress_defaults=True)
 
     config_common = argparse.ArgumentParser(add_help=False)
-    config_common.add_argument("--config", metavar="FILE", help="配置文件路径")
-    config_common.add_argument(
-        "--color", choices=("auto", "always", "never"), default="auto",
-        help="彩色输出策略（默认 auto：仅终端）",
-    )
-    config_common.add_argument("--width", type=int, metavar="N", help="输出宽度，默认取终端宽度")
-    _add_pager_options(config_common)
-    config_common.add_argument("-q", "--quiet", action="store_true", help="不输出汇总行等提示信息")
-    config_common.add_argument("-v", "--verbose", action="store_true", help="输出调试信息到 stderr")
+    _add_global_options(config_common, suppress_defaults=True, credentials=False)
 
     parser = _Parser(
         prog=PROG,
@@ -124,6 +105,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    _add_global_options(parser)
     parser.add_argument("--version", action="version", version=f"{PROG} {__version__}")
     subparsers = parser.add_subparsers(dest="command", metavar="命令")
 
@@ -221,17 +203,59 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _add_pager_options(parser: argparse.ArgumentParser) -> None:
-    """分页选项：默认 auto，做成互斥开关，语义与 gh 一致。"""
+def _add_global_options(
+    parser: argparse.ArgumentParser,
+    *,
+    suppress_defaults: bool = False,
+    credentials: bool = True,
+) -> None:
+    """挂上全局选项。
 
+    根解析器用真实默认值，子解析器用 `argparse.SUPPRESS`。这样
+    `f50sms --password X count` 与 `f50sms count --password X` 都成立：
+    写在后面的值覆盖前面的，没写的则保留根解析器解析出来的值。
+    """
+
+    def default(value: Any) -> Any:
+        return argparse.SUPPRESS if suppress_defaults else value
+
+    if credentials:
+        parser.add_argument(
+            "--host", metavar="URL", default=default(None),
+            help="路由器后台地址（默认 http://192.168.0.1）",
+        )
+        parser.add_argument(
+            "--password", metavar="PW", default=default(None),
+            help="后台密码（会话失效时需要；也可用 F50_SMS_PASSWORD）",
+        )
+        parser.add_argument(
+            "--timeout", type=float, metavar="SEC", default=default(None),
+            help="请求超时秒数（默认 10）",
+        )
+    parser.add_argument("--config", metavar="FILE", default=default(None), help="配置文件路径")
+    parser.add_argument(
+        "--color", choices=("auto", "always", "never"), default=default("auto"),
+        help="彩色输出策略（默认 auto：仅终端）",
+    )
+    parser.add_argument(
+        "--width", type=int, metavar="N", default=default(None), help="输出宽度，默认取终端宽度",
+    )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--pager", dest="pager", action="store_const", const="always", default="auto",
+        "--pager", dest="pager", action="store_const", const="always", default=default("auto"),
         help="强制用分页器显示（默认内容超过一屏才分页）",
     )
     group.add_argument(
-        "--no-pager", dest="pager", action="store_const", const="never",
+        "--no-pager", dest="pager", action="store_const", const="never", default=default("auto"),
         help="关闭分页，直接输出",
+    )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", default=default(False),
+        help="不输出汇总行等提示信息",
+    )
+    parser.add_argument(
+        "-v", "--verbose", action="store_true", default=default(False),
+        help="输出调试信息到 stderr",
     )
 
 
@@ -942,7 +966,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if not argv:
         argv = ["list"]
-    elif argv[0] not in COMMANDS and not argv[0].startswith("-"):
+    elif _looks_like_filters(argv):
+        # f50sms -u / f50sms --search 验证码 等价于省略 list
         argv = ["list"] + argv
 
     try:
@@ -950,6 +975,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except SystemExitWithMessage as exc:
         print(exc.message, file=sys.stderr)
         return exc.code
+    except argparse.ArgumentError as exc:  # 互斥选项冲突等
+        print(f"{PROG}: 参数错误：{exc}", file=sys.stderr)
+        return 2
 
     if not getattr(args, "command", None):
         parser.print_help()
@@ -1025,6 +1053,30 @@ def _prompt_password(prompt: str = "路由器后台密码: ") -> str:
         return ""
     except Exception:  # pragma: no cover - 没有可用终端
         return ""
+
+
+#: 根解析器认识的选项，出现在首位时不应被当成筛选条件。
+GLOBAL_FLAGS = frozenset({
+    "-h", "--help", "--version",
+    "--host", "--password", "--timeout", "--config",
+    "--color", "--width", "--pager", "--no-pager",
+    "-q", "--quiet", "-v", "--verbose",
+})
+
+
+def _looks_like_filters(argv: Sequence[str]) -> bool:
+    """判断首个参数是不是筛选条件，从而省略 list 子命令。
+
+    `f50sms -u`、`f50sms --search 验证码` 都按 list 处理；
+    `f50sms --host X count` 保持原样。
+    """
+
+    if not argv:
+        return False
+    first = argv[0]
+    if not first.startswith("-"):
+        return first not in COMMANDS
+    return first.split("=", 1)[0] not in GLOBAL_FLAGS
 
 
 def _opt(args: argparse.Namespace, name: str, default: Any = None) -> Any:
