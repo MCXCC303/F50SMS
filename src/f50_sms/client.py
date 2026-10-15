@@ -397,13 +397,19 @@ class F50Client:
         self.ensure_session()
 
     def anti_csrf_token(self) -> str:
-        """计算写命令需要的 `AD` 字段（网页端 `cookWithRequest` 的等价实现）。
+        """Compute the `AD` field that write commands must carry.
 
-        `AD = SHA256( SHA256(rd0 + rd1) + RD )`，其中 rd0/rd1 在 F50 固件里恒为空串。
+        The web UI builds it as `SHA256(SHA256(rd0 + rd1) + RD)`. rd0 is the
+        modem's inner version and rd1 the component version, both reported by
+        `cmd=Language,cr_version,wa_inner_version`; RD is a fresh challenge.
+        Neither version part is empty, so they have to be read, not assumed.
         """
 
+        versions = self.get_cmd("Language,cr_version,wa_inner_version", multi_data="1")
+        rd0 = str(versions.get("wa_inner_version", "") or "")
+        rd1 = str(versions.get("cr_version", "") or "")
         rd = str(self.get_cmd("RD").get("RD", "") or "")
-        return sha256_upper(sha256_upper("") + rd)
+        return sha256_upper(sha256_upper(rd0 + rd1) + rd)
 
     def check_login(self) -> Optional[bool]:
         """返回路由器当前是否处于登录态，失败时返回 `None`。

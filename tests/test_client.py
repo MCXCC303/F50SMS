@@ -102,6 +102,12 @@ class FakeRouter(F50Client):
             return {"sms_unread_num": "7", "sms_dev_unread_num": "5", "sms_sim_unread_num": "2"}
         if cmd == "RD":
             return {"RD": "rd-token"}
+        if cmd == "Language,cr_version,wa_inner_version":
+            return {
+                "Language": "en",
+                "wa_inner_version": INNER_VERSION,
+                "cr_version": COMPONENT_VERSION,
+            }
         if cmd == "loginfo":
             return {"loginfo": "ok"}
         return self.extra.get(cmd, {cmd: ""})
@@ -114,6 +120,11 @@ class EmptyMailboxRouter(FakeRouter):
         if cmd == "sms_data_total":
             return {}
         return super()._authorised(cmd, params)
+
+
+#: Version parts the fake reports, which feed the AD token.
+INNER_VERSION = "F50_TEST_INNER"
+COMPONENT_VERSION = "MU300_TEST_COMP"
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +313,14 @@ class MiscTests(unittest.TestCase):
         self.assertEqual(F50Client("https://10.0.0.1:8443").host, "https://10.0.0.1:8443")
 
     def test_anti_csrf_token(self):
+        # AD = SHA256(SHA256(rd0 + rd1) + RD), where rd0/rd1 are the firmware
+        # version strings. Treating them as empty yields a token the router
+        # silently ignores, so both parts are pinned here.
         token = FakeRouter().anti_csrf_token()
-        self.assertEqual(token, sha256_upper(sha256_upper("") + "rd-token"))
+        self.assertEqual(
+            token, sha256_upper(sha256_upper(INNER_VERSION + COMPONENT_VERSION) + "rd-token")
+        )
+        self.assertNotEqual(token, sha256_upper(sha256_upper("") + "rd-token"))
 
     def test_ping_does_not_need_a_session(self):
         router = FakeRouter(session=False, password=None)
