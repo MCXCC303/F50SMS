@@ -294,7 +294,11 @@ class F50Client:
         return data
 
     def set_cmd(self, goform_id: str, *, with_ad: bool = False, **params: Any) -> Dict[str, Any]:
-        """执行一条写命令（`goformId`）。本工具目前只读，仅保留给后续扩展。"""
+        """Send a write command (`goformId`).
+
+        `with_ad=True` establishes a session and adds the AD token, which the
+        router requires for anything that changes state.
+        """
 
         payload: Dict[str, Any] = {"isTest": "false", "goformId": goform_id}
         payload.update(params)
@@ -522,6 +526,35 @@ class F50Client:
         if total is not None:
             return total
         return _as_int(raw.get("sms_dev_unread_num")) + _as_int(raw.get("sms_sim_unread_num"))
+
+    def mark_read(self, message_ids: Sequence[str]) -> bool:
+        """Tag messages as read, in one batched request.
+
+        Mirrors what the web UI sends when you open a conversation: the ids
+        joined with ';' and a trailing ';', plus the AD anti-forgery token.
+
+        The router answers with an empty body and no status, so a True return
+        only means the request was accepted. Callers confirm by re-reading
+        state, which is why marking is verified rather than trusted.
+        """
+
+        ids = [str(item).strip() for item in message_ids if str(item).strip()]
+        if not ids:
+            return False
+        joined = "".join(f"{item};" for item in ids)
+        self.set_cmd("SET_MSG_READ", with_ad=True, msg_id=joined, tag=0)
+        return True
+
+    def message_is_read(self, message_id: str) -> Optional[bool]:
+        """Re-read one message to see whether it is now read.
+
+        Returns None when the message is not in the current listing.
+        """
+
+        for message in self.fetch_messages():
+            if message.id == str(message_id):
+                return not message.is_unread
+        return None
 
     def fetch_flags(self) -> Dict[str, Any]:
         """短信相关状态位（有新短信 / 有状态报告等）。"""

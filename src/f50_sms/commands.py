@@ -115,7 +115,36 @@ def cmd_view(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         out.emit(messages_plain([target]))
     else:
         out.emit(render_message_detail(target))
+
+    # Marking happens after rendering so the STATE line reports the state we
+    # actually read, not the state we just caused.
+    if target.is_unread and getattr(args, "set_as_read", False):
+        _mark_read(client, target, out)
     return 0
+
+
+def _mark_read(client: F50Client, message: Message, out: Output) -> bool:
+    """Ask the router to mark a message read and confirm it actually happened.
+
+    The write answers with an empty body, so the message tag afterwards is the
+    only trustworthy signal.
+    """
+
+    try:
+        client.mark_read([message.id])
+    except F50Error as exc:
+        out.note(f"could not mark {message.short_id} as read: {exc}")
+        return False
+
+    state = client.message_is_read(message.id)
+    if state is True:
+        out.note(f"marked {message.short_id} as read")
+        return True
+    if state is False:
+        out.note(f"{message.short_id} is still unread on the router")
+        return False
+    out.note(f"asked the router to mark {message.short_id} as read, could not confirm")
+    return False
 
 
 def messages_plain(messages: Sequence[Message]) -> str:
@@ -335,6 +364,7 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         host=_opt(args, "host"),
         password=_opt(args, "password"),
         timeout=_opt(args, "timeout"),
+        set_as_read=_opt(args, "set_as_read"),
         config_file=args.config,
     )
     stored = load_config(args.config)
@@ -343,6 +373,7 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         ("host", f"{settings.host}    ← {settings.sources.get('host', '')}"),
         ("password", ("******" if settings.password else "(not set)") + f"    ← {settings.sources.get('password', '')}"),
         ("timeout", f"{settings.timeout:g}s    ← {settings.sources.get('timeout', '')}"),
+        ("set_as_read", f"{str(settings.set_as_read).lower()}    ← {settings.sources.get('set_as_read', '')}"),
     ]
     if stored:
         rows.append(("Keys in file", ", ".join(sorted(stored))))

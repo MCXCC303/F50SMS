@@ -111,6 +111,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     view_parser.add_argument("id", nargs="?", help="short id from the ID column in list")
     view_parser.add_argument("--from", dest="from_number", metavar="NUMBER", help="latest message from this number")
+    view_parser.add_argument(
+        "--set-as-read", type=_bool_arg, default=None, metavar="BOOL",
+        help="mark the message read after showing it (default: the set_as_read setting)",
+    )
     _add_format_option(view_parser, SHOW_FORMATS, default="text")
 
     # thread ---------------------------------------------------------------
@@ -269,6 +273,17 @@ def _add_global_options(
     )
 
 
+def _bool_arg(text: str) -> bool:
+    """Accept --flag=true / --flag=false, and the common spellings of each."""
+
+    lowered = str(text).strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off"):
+        return False
+    raise argparse.ArgumentTypeError(f"expected true or false, got {text!r}")
+
+
 def _add_format_option(parser: argparse.ArgumentParser, choices: Sequence[str], default: Optional[str]) -> None:
     parser.add_argument(
         "-f", "--format", dest="format", choices=list(choices), default=default,
@@ -422,8 +437,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         host=_opt(args, "host"),
         password=_opt(args, "password"),
         timeout=_opt(args, "timeout"),
+        set_as_read=_opt(args, "set_as_read"),
         config_file=args.config,
     )
+    # Commands that carry the flag but were not given it fall back to the
+    # resolved setting.
+    if hasattr(args, "set_as_read") and args.set_as_read is None:
+        args.set_as_read = settings.set_as_read
 
     client = F50Client(settings.host, password=settings.password, timeout=settings.timeout)
     key = _command_key(args)

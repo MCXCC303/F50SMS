@@ -50,14 +50,26 @@ class FakeClient(F50Client):
     def __init__(self, payload=None, **kwargs):
         kwargs.setdefault("password", "s3cret")
         super().__init__("http://192.0.2.1", **kwargs)
-        self.payload = payload if payload is not None else SAMPLE_PAYLOAD
+        # Copy, so a test that marks a message read cannot leak into the next.
+        source = payload if payload is not None else SAMPLE_PAYLOAD
+        self.payload = [dict(item) for item in source]
         self.login_attempts = 0
+        self.read_requests = []
 
     def _request_json(self, path, params, post=False):
         cmd = params.get("cmd", "")
         if post:
+            if params.get("goformId") == "SET_MSG_READ":
+                self.read_requests.append(dict(params))
+                marked = str(params.get("msg_id", ""))
+                for item in self.payload:
+                    if f"{item['id']};" in marked:
+                        item["tag"] = "0"
+                return {}
             self.login_attempts += 1
             return {"result": "0"}
+        if cmd == "Language,cr_version,wa_inner_version":
+            return {"Language": "en", "wa_inner_version": "inner-v1", "cr_version": "comp-v1"}
         if cmd == "sms_data_total":
             return {"messages": self.payload}
         if cmd == "sms_capacity_info":
@@ -79,6 +91,59 @@ class FakeClient(F50Client):
 
     def ping(self):
         return 0.01
+
+
+class SetAsReadTests(unittest.TestCase):
+    """view marks an unread message read, unless told not to."""
+
+    #: The unread message in SAMPLE_PAYLOAD, and a read one.
+    UNREAD = "3"
+    READ = "2"
+
+    def _view(self, client, argv):
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "F50Client", return_value=client):
+            with redirect_stdout(out), redirect_stderr(err):
+                code = cli.main(argv)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_unread_message_is_marked_and_reported(self):
+        client = FakeClient()
+        code, out, err = self._view(client, ["view", self.UNREAD, "--set-as-read=true"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(client.read_requests), 1)
+        self.assertIn("marked", err)
+        self.assertIn(self.UNREAD, err)
+
+    def test_flag_false_leaves_the_message_alone(self):
+        client = FakeClient()
+        code, out, err = self._view(client, ["view", self.UNREAD, "--set-as-read=false"])
+        self.assertEqual(code, 0)
+        self.assertEqual(client.read_requests, [])
+        self.assertNotIn("marked", err)
+
+    def test_already_read_message_is_not_marked(self):
+        client = FakeClient()
+        code, out, err = self._view(client, ["view", self.READ, "--set-as-read=true"])
+        self.assertEqual(code, 0)
+        self.assertEqual(client.read_requests, [])
+        self.assertNotIn("marked", err)
+
+    def test_state_line_reports_the_state_that_was_read(self):
+        # The header must show what we fetched, not what we just changed.
+        client = FakeClient()
+        code, out, err = self._view(client, ["view", self.UNREAD, "--set-as-read=true"])
+        self.assertIn("STATE\tunread", out)
+        self.assertEqual(client.payload[0]["tag"], "0")
+
+    def test_quiet_suppresses_the_note(self):
+        client = FakeClient()
+        code, out, err = self._view(
+            client, ["--quiet", "view", self.UNREAD, "--set-as-read=true"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(len(client.read_requests), 1)
+        self.assertNotIn("marked", err)
 
 
 class PasswordGateClient(FakeClient):

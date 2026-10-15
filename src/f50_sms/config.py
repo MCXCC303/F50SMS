@@ -21,9 +21,29 @@ CONFIG_FILE_NAME = "config.json"
 ENV_HOST = "F50_SMS_HOST"
 ENV_PASSWORD = "F50_SMS_PASSWORD"
 ENV_TIMEOUT = "F50_SMS_TIMEOUT"
+ENV_SET_AS_READ = "F50_SMS_SET_AS_READ"
 ENV_CONFIG = "F50_SMS_CONFIG"
 
-KNOWN_KEYS = ("host", "password", "timeout")
+KNOWN_KEYS = ("host", "password", "timeout", "set_as_read")
+
+#: What counts as a true/false value in a setting or environment variable.
+_TRUE_WORDS = ("1", "true", "yes", "on")
+_FALSE_WORDS = ("0", "false", "no", "off")
+
+
+def coerce_bool(value: Any, default: bool) -> bool:
+    """Read a setting that may arrive as a JSON bool or as text."""
+
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _TRUE_WORDS:
+        return True
+    if text in _FALSE_WORDS:
+        return False
+    return default
 
 
 def config_path(explicit: Optional[str] = None) -> Path:
@@ -88,6 +108,7 @@ class Settings:
     host: str = DEFAULT_HOST
     password: Optional[str] = None
     timeout: float = DEFAULT_TIMEOUT
+    set_as_read: bool = True
     config_file: Optional[Path] = None
     sources: Dict[str, str] = field(default_factory=dict)
 
@@ -101,6 +122,7 @@ def resolve_settings(
     host: Optional[str] = None,
     password: Optional[str] = None,
     timeout: Optional[float] = None,
+    set_as_read: Optional[bool] = None,
     config_file: Optional[str] = None,
 ) -> Settings:
     """按优先级合并各处配置。"""
@@ -149,6 +171,19 @@ def resolve_settings(
             settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "built-in default"
     else:
         settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "built-in default"
+
+    # set_as_read
+    env_set_as_read = os.environ.get(ENV_SET_AS_READ)
+    if set_as_read is not None:
+        settings.set_as_read, sources["set_as_read"] = bool(set_as_read), "command line --set-as-read"
+    elif env_set_as_read is not None:
+        settings.set_as_read = coerce_bool(env_set_as_read, True)
+        sources["set_as_read"] = f"environment {ENV_SET_AS_READ}"
+    elif "set_as_read" in values:
+        settings.set_as_read = coerce_bool(values["set_as_read"], True)
+        sources["set_as_read"] = f"config file {path}"
+    else:
+        settings.set_as_read, sources["set_as_read"] = True, "built-in default"
 
     settings.sources = sources
     return settings

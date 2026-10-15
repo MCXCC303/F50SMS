@@ -113,6 +113,30 @@ class FakeRouter(F50Client):
         return self.extra.get(cmd, {cmd: ""})
 
 
+class WriteCommandTests(unittest.TestCase):
+    """The one write command we send."""
+
+    def test_mark_read_sends_one_batched_request(self):
+        router = FakeRouter()
+        self.assertTrue(router.mark_read(["3", "2"]))
+        path, params, post = router.calls[-1]
+        self.assertTrue(post)
+        self.assertTrue(path.endswith("/goform/goform_set_cmd_process"))
+        self.assertEqual(params["goformId"], "SET_MSG_READ")
+        # Ids are joined with ';' and the payload ends with one too.
+        self.assertEqual(params["msg_id"], "3;2;")
+        self.assertEqual(params["tag"], 0)
+        self.assertEqual(params["isTest"], "false")
+        self.assertIn("AD", params)
+
+    def test_mark_read_without_ids_sends_nothing(self):
+        router = FakeRouter()
+        before = len(router.calls)
+        self.assertFalse(router.mark_read([]))
+        self.assertFalse(router.mark_read(["", "  "]))
+        self.assertEqual(len(router.calls), before)
+
+
 class EmptyMailboxRouter(FakeRouter):
     """空收件箱返回 `{}` 的固件（字段缺失并不代表掉线）。"""
 
