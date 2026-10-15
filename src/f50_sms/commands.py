@@ -144,7 +144,7 @@ def cmd_thread_view(client: F50Client, args: argparse.Namespace, out: Output) ->
     if fmt == "chat":
         out.emit(render_thread(selected, palette=out.palette, width=out.width))
     elif fmt in ("table",):
-        out.emit(render_message_table(selected, palette=out.palette, width=out.width, full=True))
+        out.emit(render_message_table(selected, palette=out.palette, full=True))
     else:
         out.emit(render_messages(selected, fmt, out, full=True))
     return 0
@@ -184,7 +184,7 @@ def cmd_thread_list(client: F50Client, args: argparse.Namespace, out: Output) ->
         if not threads:
             out.note("no conversations.")
             return 0
-        out.emit(render_thread_table(threads, palette=out.palette, width=out.width))
+        out.emit(render_thread_table(threads, palette=out.palette))
         if not args.quiet:
             out.note(f"{len(threads)} conversations")
     return 0

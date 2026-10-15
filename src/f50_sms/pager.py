@@ -5,7 +5,8 @@
 * 分页器命令按 `F50_PAGER` > `PAGER` > `less` 的顺序解析；
 * 只在标准输出是终端时分页，重定向到管道时永远直接输出；
 * 内容不足一屏时不分页（连 `less` 都不会启动）；
-* `less` 自动补 `-R` 以保留 ANSI 颜色，并默认 `LESS=FRX`；
+* `less` 自动补 `-R` 保留 ANSI 颜色、补 `-S` 让长行横切而非折行，
+  并默认 `LESS=FRX`；用户自己写了 `-S` 或 `+S` 则以用户的为准；
 * 把分页器设为 `cat` 或空串即可关闭分页。
 
 本模块只负责「怎么分页」，不关心输出内容，便于单独测试。
@@ -31,6 +32,7 @@ DISABLED_VALUES = ("", "cat", "none", "off")
 
 #: 使用 less 时，若用户没有自行设置 LESS，则套用这套选项：
 #: F = 不足一屏直接退出，R = 解释 ANSI 颜色，X = 退出时不清屏。
+#: S（长行横切而非折行）通过命令行参数补，见 with_less_flags。
 LESS_DEFAULT_OPTIONS = "FRX"
 
 
@@ -60,17 +62,49 @@ def resolve_pager_command(env: Optional[Mapping[str, str]] = None) -> Optional[L
     return command or None
 
 
+#: Single-letter less options we add when the user has not chosen for us.
+#: R = show ANSI colours, S = chop long lines instead of wrapping them.
+LESS_ADDED_FLAGS = ("R", "S")
+
+#: Long spellings of the same options, so an explicit long form also counts.
+LESS_LONG_OPTIONS = {
+    "R": ("--raw-control-chars",),
+    "S": ("--chop-long-lines",),
+}
+
+
+def _has_less_option(arguments: Sequence[str], letter: str) -> bool:
+    """Whether the arguments already set, or explicitly clear, a less option.
+
+    Both the short forms (-S, +S) and the long spellings are recognised, so a
+    user who writes +S to turn chopping back off keeps that choice.
+    """
+
+    for arg in arguments[1:]:
+        if arg.startswith(("-", "+")) and letter in arg[1:]:
+            return True
+        for long_name in LESS_LONG_OPTIONS.get(letter, ()):
+            if arg == long_name or arg.startswith(long_name + "="):
+                return True
+    return False
+
+
 def with_less_flags(command: Sequence[str]) -> List[str]:
-    """给 `less` 补上 `-R`，保证彩色输出不被转义成乱码。"""
+    """Add the less options we rely on unless the user already picked.
+
+    -R keeps ANSI colours readable. -S chops long lines rather than wrapping
+    them, which holds the shape of a long message body together and lets the
+    reader scroll sideways for the rest.
+    """
 
     result = list(command)
-    if not result:
+    if not result or os.path.basename(result[0]) != "less":
         return result
-    if os.path.basename(result[0]) != "less":
-        return result
-    if any(flag.startswith("-") and "R" in flag for flag in result[1:]):
-        return result
-    result.append("-R")
+    missing = "".join(
+        letter for letter in LESS_ADDED_FLAGS if not _has_less_option(result, letter)
+    )
+    if missing:
+        result.append("-" + missing)
     return result
 
 

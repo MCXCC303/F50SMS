@@ -6,12 +6,16 @@ import json
 import unittest
 
 from f50_sms.models import Message
+from f50_sms.query import build_threads
 from f50_sms.render import (
     Palette,
+    first_line,
+    flatten,
     pad,
     render_message_detail,
     render_message_table,
     render_table,
+    render_thread_table,
     summarize,
     text_width,
     truncate,
@@ -102,10 +106,56 @@ class TableTests(unittest.TestCase):
 
 class MessageTableTests(unittest.TestCase):
     def test_render_without_colour(self):
-        out = render_message_table([make()], palette=Palette(False), width=120)
+        out = render_message_table([make()], palette=Palette(False))
         self.assertIn("10010", out)
         self.assertIn("unread", out)
         self.assertIn("示例", out)
+
+
+class PreviewTests(unittest.TestCase):
+    """The TEXT column shows one body line, whole, with no ellipsis."""
+
+    MULTI = "第一行内容\n第二行内容\n第三行内容"
+
+    def test_first_line_helper(self):
+        self.assertEqual(first_line(self.MULTI), "第一行内容")
+        self.assertEqual(first_line("  前后有空白  "), "前后有空白")
+
+    def test_first_line_skips_leading_blanks(self):
+        self.assertEqual(first_line("\n\n  真正的第一行\n后面"), "真正的第一行")
+
+    def test_first_line_of_empty_body(self):
+        self.assertEqual(first_line(""), "")
+        self.assertEqual(first_line(None), "")
+
+    def test_flatten_keeps_every_character(self):
+        self.assertEqual(flatten("a\n b\n\nc"), "a b c")
+
+    def test_table_shows_the_first_line_in_full(self):
+        row = render_message_table([make(content=self.MULTI)], palette=Palette(False)).splitlines()[2]
+        self.assertIn("第一行内容", row)
+        self.assertNotIn("第二行", row)
+        self.assertNotIn("\u2026", row)
+
+    def test_table_does_not_clip_a_long_first_line(self):
+        body = "长" * 400
+        row = render_message_table([make(content=body)], palette=Palette(False)).splitlines()[2]
+        self.assertIn(body, row)
+        self.assertNotIn("\u2026", row)
+
+    def test_full_shows_the_whole_body_flattened(self):
+        row = render_message_table(
+            [make(content=self.MULTI)], palette=Palette(False), full=True,
+        ).splitlines()[2]
+        for part in ("第一行内容", "第二行内容", "第三行内容"):
+            self.assertIn(part, row)
+        self.assertNotIn("\u2026", row)
+
+    def test_thread_preview_uses_the_first_line(self):
+        threads = build_threads([make(content=self.MULTI)])
+        row = render_thread_table(threads, palette=Palette(False)).splitlines()[2]
+        self.assertIn("第一行内容", row)
+        self.assertNotIn("第二行", row)
 
 class MessageDetailTests(unittest.TestCase):
     """The detail view is a plain KEY<TAB>value flow with no borders."""
@@ -149,13 +199,13 @@ class GhStyleHeaderTests(unittest.TestCase):
         return [part for part in line.split("  ") if part]
 
     def test_header_is_uppercase(self):
-        out = render_message_table([make()], palette=Palette(False), width=120)
+        out = render_message_table([make()], palette=Palette(False))
         header = out.splitlines()[0]
         for name in ("ID", "TIME", "SOURCE", "NUMBER", "STATE", "TEXT"):
             self.assertIn(name, header)
 
     def test_underline_matches_each_column_width(self):
-        out = render_message_table([make()], palette=Palette(False), width=120)
+        out = render_message_table([make()], palette=Palette(False))
         header, rule = out.splitlines()[0], out.splitlines()[1]
         header_columns = self._columns(header)
         rule_columns = self._columns(rule)
@@ -165,19 +215,19 @@ class GhStyleHeaderTests(unittest.TestCase):
             self.assertGreaterEqual(text_width(line), text_width(head))
 
     def test_short_id_column_carries_a_hash_prefix(self):
-        out = render_message_table([make()], palette=Palette(False), width=120)
+        out = render_message_table([make()], palette=Palette(False))
         row = out.splitlines()[2]
         self.assertTrue(row.startswith("#"))
 
     def test_relative_time_by_default(self):
         message = make()
-        out = render_message_table([message], palette=Palette(False), width=120)
+        out = render_message_table([message], palette=Palette(False))
         self.assertIn("ago", out)
         self.assertNotIn("2026-10-13 08:30:55", out)
 
     def test_absolute_time_on_request(self):
         out = render_message_table(
-            [make()], palette=Palette(False), width=120, time_style="absolute",
+            [make()], palette=Palette(False), time_style="absolute",
         )
         self.assertIn("2026-10-13 08:30:55", out)
 

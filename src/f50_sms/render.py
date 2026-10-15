@@ -266,34 +266,48 @@ def sender_label(message: Message) -> str:
     return describe_number(message.number)
 
 
-def _clip(text: str, limit: int) -> str:
-    flat = " ".join(str(text).split())
-    return truncate(flat, limit) if limit > 0 else flat
+def flatten(text: str) -> str:
+    """Collapse a body onto one line, keeping every character."""
+
+    return " ".join(str(text).split())
+
+
+def first_line(text: str) -> str:
+    """The opening line of a body, used as the list preview.
+
+    Multi-line bodies open with the informative part, so the first line is a
+    better preview than a prefix of the flattened whole.
+    """
+
+    for line in str(text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
 
 
 def render_message_table(
     messages: Sequence[Message],
     *,
     palette: Optional[Palette] = None,
-    width: Optional[int] = None,
     full: bool = False,
     time_style: str = "relative",
 ) -> str:
-    """The message list table, with a gh-style uppercase header."""
+    """The message list table, with a gh-style uppercase header.
+
+    The TEXT column is not clipped. Paging hands long lines to less, which
+    chops them and stays open so the reader can scroll sideways, so cutting the
+    body here would only throw information away.
+    """
 
     palette = palette or Palette(False)
-    total_width = width or terminal_width()
 
     headers = ["ID", "TIME", "SOURCE", "NUMBER", "STATE", "TEXT"]
     time_width = 19 if time_style == "absolute" else 22
-    fixed = 2 + time_width + 2 + 12 + 2 + 14 + 2 + 4 + 2 + 4
-    content_width = max(12, total_width - fixed)
-    if full:
-        content_width = 0
 
     rows: List[List[Any]] = []
     for message in messages:
-        content = message.content if full else _clip(message.content, content_width)
+        content = flatten(message.content) if full else first_line(message.content)
         if time_style == "absolute":
             when = message.timestamp_text or message.raw_date
         else:
@@ -308,7 +322,7 @@ def render_message_table(
         ])
 
     aligns = ["right", "left", "left", "left", "left", "left"]
-    max_widths: List[Optional[int]] = [None, time_width, 12, 14, None, content_width or None]
+    max_widths: List[Optional[int]] = [None, time_width, 12, 14, None, None]
     return render_table(
         headers,
         rows,
@@ -395,13 +409,11 @@ def render_thread_table(
     threads: Sequence[Dict[str, Any]],
     *,
     palette: Optional[Palette] = None,
-    width: Optional[int] = None,
 ) -> str:
+    """One row per conversation; the PREVIEW is the latest body's first line."""
+
     palette = palette or Palette(False)
-    total = width or terminal_width()
     headers = ["NUMBER", "SOURCE", "COUNT", "UNREAD", "LAST TIME", "PREVIEW"]
-    fixed = 17 + 2 + 14 + 2 + 5 + 2 + 4 + 2 + 19 + 2
-    preview_width = max(10, total - fixed)
 
     rows: List[List[Any]] = []
     for thread in threads:
@@ -412,10 +424,10 @@ def render_thread_table(
             Cell(str(thread["count"]), None),
             Cell(str(thread["unread"]), (lambda t: palette.style(t, "bold", "bright_yellow")) if thread["unread"] else None),
             Cell(thread["latest_time"], None),
-            Cell(_clip(thread["latest_content"], preview_width), None),
+            Cell(first_line(thread["latest_content"]), None),
         ])
     aligns = ["left", "left", "right", "right", "left", "left"]
-    max_widths: List[Optional[int]] = [17, 14, None, None, 19, preview_width or None]
+    max_widths: List[Optional[int]] = [17, 14, None, None, 19, None]
     return render_table(headers, rows, aligns=aligns, palette=palette, max_widths=max_widths)
 
 

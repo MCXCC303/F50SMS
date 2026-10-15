@@ -301,7 +301,10 @@ def _add_filter_options(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("-n", "--limit", type=int, default=0, metavar="N", help="show at most N messages (default: all)")
     parser.add_argument("-r", "--reverse", action="store_true", help="oldest first")
-    parser.add_argument("--full", action="store_true", help="do not truncate the body")
+    parser.add_argument(
+        "--full", action="store_true",
+        help="show the whole body instead of just its first line",
+    )
 
 
 #: Flags the root parser owns; when they appear first they are not filters.

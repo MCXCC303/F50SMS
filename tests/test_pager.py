@@ -35,18 +35,38 @@ class ResolveCommandTests(unittest.TestCase):
 
 
 class LessFlagsTests(unittest.TestCase):
-    def test_adds_raw_control(self):
-        self.assertEqual(pager.with_less_flags(["less"]), ["less", "-R"])
+    def test_adds_both_flags(self):
+        self.assertEqual(pager.with_less_flags(["less"]), ["less", "-RS"])
 
-    def test_keeps_existing_raw_control(self):
-        self.assertEqual(pager.with_less_flags(["less", "-R"]), ["less", "-R"])
-        self.assertEqual(pager.with_less_flags(["less", "-FRX"]), ["less", "-FRX"])
+    def test_keeps_a_flag_the_user_already_set(self):
+        self.assertEqual(pager.with_less_flags(["less", "-R"]), ["less", "-R", "-S"])
+        self.assertEqual(pager.with_less_flags(["less", "-S"]), ["less", "-S", "-R"])
+        self.assertEqual(pager.with_less_flags(["less", "-FRX"]), ["less", "-FRX", "-S"])
+
+    def test_neither_flag_is_duplicated(self):
+        self.assertEqual(pager.with_less_flags(["less", "-RS"]), ["less", "-RS"])
+        self.assertEqual(pager.with_less_flags(["less", "-SR"]), ["less", "-SR"])
+
+    def test_explicitly_disabling_chop_is_respected(self):
+        # +S turns chopping back off, so we must not force -S on top of it.
+        self.assertEqual(pager.with_less_flags(["less", "+S"]), ["less", "+S", "-R"])
+
+    def test_long_spellings_are_recognised(self):
+        self.assertEqual(
+            pager.with_less_flags(["less", "--chop-long-lines"]),
+            ["less", "--chop-long-lines", "-R"],
+        )
+        self.assertEqual(
+            pager.with_less_flags(["less", "--raw-control-chars"]),
+            ["less", "--raw-control-chars", "-S"],
+        )
 
     def test_absolute_path_is_recognised(self):
-        self.assertEqual(pager.with_less_flags(["/usr/bin/less"]), ["/usr/bin/less", "-R"])
+        self.assertEqual(pager.with_less_flags(["/usr/bin/less"]), ["/usr/bin/less", "-RS"])
 
     def test_other_pagers_untouched(self):
         self.assertEqual(pager.with_less_flags(["more"]), ["more"])
+        self.assertEqual(pager.with_less_flags(["cat"]), ["cat"])
 
 
 class EnvironmentTests(unittest.TestCase):

@@ -98,7 +98,7 @@ def render_messages(
 
     if fmt == "table":
         return render_message_table(
-            messages, palette=out.palette, width=out.width, full=full, time_style=time_style,
+            messages, palette=out.palette, full=full, time_style=time_style,
         )
     if fmt == "plain":
         lines = []
