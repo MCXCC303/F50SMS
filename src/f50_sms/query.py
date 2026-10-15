@@ -8,7 +8,7 @@ namespaces and return new collections.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence
 
 from .errors import F50NotFoundError
@@ -18,6 +18,36 @@ from .models import TAG_ALIASES, TAG_LABELS, Message
 
 _RELATIVE_RE = re.compile(r"^(\d+)\s*([smhdw])$", re.IGNORECASE)
 _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def message_moment(message: Message) -> Optional[datetime]:
+    """The message time on the router's clock, without an offset."""
+
+    moment = message.timestamp
+    return None if moment is None else moment.replace(tzinfo=None)
+
+
+def router_now(messages: Sequence[Message]) -> datetime:
+    """Current wall-clock time in the router's timezone, as a naive datetime.
+
+    The router stamps messages in its own zone and that is also how we display
+    them, so any comparison against a message time has to happen in that frame.
+    The host clock provides only the absolute instant; the offset is read off
+    the messages, which keeps the result right whatever timezone the host uses.
+    """
+
+    offset = next(
+        (
+            message.timestamp.utcoffset()
+            for message in messages
+            if message.timestamp is not None and message.timestamp.tzinfo is not None
+        ),
+        None,
+    )
+    moment = datetime.now(timezone.utc)
+    if offset is not None:
+        moment = moment.astimezone(timezone(offset))
+    return moment.replace(tzinfo=None)
 
 
 def parse_time_spec(text: str, *, now: Optional[datetime] = None) -> datetime:

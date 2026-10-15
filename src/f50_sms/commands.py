@@ -11,7 +11,9 @@ import argparse
 import io
 import json
 import re
+import shlex
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
@@ -21,8 +23,15 @@ from .config import config_path, load_config, resolve_settings, save_config
 from .errors import F50Error, F50NotFoundError
 from .labels import normalize_number
 from .models import Message, resolve_ref
+from .notifier import notification_argv, send as send_notification
 from .output import DATA_FORMATS, Output, render_messages, resolve_format as _resolve_format
-from .query import build_threads, filter_messages
+from .query import (
+    build_threads,
+    filter_messages,
+    message_moment,
+    parse_time_spec,
+    router_now,
+)
 from .render import (
     EXPORTERS,
     pad,
@@ -331,6 +340,80 @@ def cmd_watch(client: F50Client, args: argparse.Namespace, out: Output) -> int:
             return 0
 
 
+def cmd_notify(client: F50Client, args: argparse.Namespace, out: Output) -> int:
+    """Watch for new messages and raise a desktop notification for each."""
+
+    interval = max(2.0, float(args.interval))
+    messages = _load_messages(client, args)
+
+    # Identity is the content hash, not the router's message id: those ids are
+    # dense slot numbers that get reused once a message is deleted, so a daemon
+    # keyed on them would silently skip a recycled one.
+    cutoff = None
+    if args.since:
+        cutoff = parse_time_spec(args.since, now=router_now(messages))
+    notified = {
+        message.digest
+        for message in messages
+        if cutoff is None or not _reached(message, cutoff)
+    }
+    out.note(f"watching for new messages to notify (every {interval:g}s, Ctrl-C to stop)...")
+
+    while True:
+        _notify_new(messages, notified, args, out)
+        if args.once:
+            return 0
+        time.sleep(interval)
+        try:
+            messages = _load_messages(client, args)
+        except F50Error as exc:
+            out.note(f"read failed: {exc}")
+
+
+def _notify_new(
+    messages: Sequence[Message],
+    notified: set,
+    args: argparse.Namespace,
+    out: Output,
+) -> List[Message]:
+    """Notify for messages not yet announced, and record them as announced.
+
+    Membership is by content hash rather than arrival order or timestamp: the
+    router can hand over a message stamped before ones already seen, because
+    the timestamp says when it was sent and not when it reached us, and that
+    message still deserves a notification.
+    """
+
+    fresh = [message for message in messages if message.digest not in notified]
+    fresh.sort(key=lambda message: message.sort_key)
+    for message in fresh:
+        notified.add(message.digest)
+        _raise_notification(message, args, out)
+    return fresh
+
+
+def _reached(message: Message, cutoff: datetime) -> bool:
+    """Whether a message is at or after a cutoff on the router's clock."""
+
+    moment = message_moment(message)
+    return moment is not None and moment >= cutoff
+
+
+def _raise_notification(message: Message, args: argparse.Namespace, out: Output) -> bool:
+    """Show one notification, or print the command under --dry-run."""
+
+    argv = notification_argv(message, program=args.notify_send)
+    if args.dry_run:
+        out.emit(" ".join(shlex.quote(part) for part in argv))
+        return True
+    problem = send_notification(argv)
+    if problem is None:
+        out.note(f"notified {message.short_id} ({sender_label(message)})")
+        return True
+    out.note(f"could not notify for {message.short_id}: {problem}")
+    return False
+
+
 def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     action = args.config_action or "show"
     path = config_path(args.config)
@@ -552,6 +635,7 @@ COMMANDS = {
     "status": cmd_status,
     "export": cmd_export,
     "watch": cmd_watch,
+    "notify": cmd_notify,
     "auth login": cmd_auth_login,
     "auth status": cmd_auth_status,
     "auth logout": cmd_auth_logout,

@@ -176,6 +176,33 @@ def build_parser() -> argparse.ArgumentParser:
     watch_parser.add_argument("--once", action="store_true", help="check once and exit (good for cron)")
     watch_parser.add_argument("--backlog", type=int, default=0, metavar="N", help="print the most recent N messages on start")
 
+    # notify ---------------------------------------------------------------
+    notify_parser = subparsers.add_parser(
+        "notify", parents=[common], help="raise a desktop notification for each new message",
+        description=(
+            "Keep polling and run notify-send for every message that has not been "
+            "notified yet; Ctrl-C to stop."
+        ),
+    )
+    notify_parser.add_argument(
+        "-i", "--interval", type=float, default=15.0, metavar="SEC",
+        help="poll interval in seconds (default: 15)",
+    )
+    notify_parser.add_argument("--once", action="store_true", help="check once and exit")
+    notify_parser.add_argument(
+        "--since", metavar="TIME",
+        help="also notify for messages at or after this time when starting "
+             "(2026-10-01 / 30m / 2h)",
+    )
+    notify_parser.add_argument(
+        "--notify-send", default="notify-send", metavar="PATH",
+        help="notification program to run (default: notify-send)",
+    )
+    notify_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="print the command instead of running it",
+    )
+
     # config ---------------------------------------------------------------
     config_parser = subparsers.add_parser(
         "config", parents=[common], help="show or save settings",
