@@ -1,53 +1,59 @@
-"""给号码加一点人类可读的注释。
+"""Lightweight, human-friendly labels for phone numbers.
 
-这里只做**启发式**判断，不联网、不查数据库，目的是让列表更容易扫读：
+Purely heuristic and offline (no lookups, no database). It exists to make lists
+easier to scan:
 
-* 正文开头的签名（`【中国农业银行】…`）优先级最高，直接当作来源；
-* 常见服务短号（10010、95599…）查表得到机构名；
-* 106 开头的是行业/企业短信通道；
-* 11 位 1 开头的是普通手机号。
+* the signature at the start of the body ("[Bank]...") wins and is used as the
+  source label;
+* common short/service codes (10010, 95599, ...) resolve via a lookup table;
+* 106-prefixed numbers are enterprise SMS gateways;
+* 11-digit numbers starting with 1 are ordinary mobile numbers.
 """
 
 from __future__ import annotations
 
 import re
 
-#: 常见短号 / 服务号。只收录通用、稳定的号码。
+#: Well-known short/service codes. Organisation names are rendered in English so
+#: the output reads consistently regardless of the message language.
 KNOWN_NUMBERS = {
-    "10086": "中国移动",
-    "1008611": "中国移动·话费查询",
-    "10010": "中国联通",
-    "10011": "中国联通·充值",
-    "10000": "中国电信",
-    "10001": "中国电信·自助服务",
-    "10188": "联通支付",
-    "12306": "中国铁路 12306",
-    "95599": "中国农业银行",
-    "95588": "中国工商银行",
-    "95533": "中国建设银行",
-    "95566": "中国银行",
-    "95555": "招商银行",
-    "95511": "中国平安",
-    "95561": "兴业银行",
-    "95595": "中国光大银行",
-    "95559": "交通银行",
-    "95508": "广发银行",
-    "95528": "上海浦东发展银行",
-    "95577": "华夏银行",
-    "95558": "中信银行",
-    "95568": "中国民生银行",
-    "95580": "中国邮政储蓄银行",
-    "95598": "国家电网",
-    "95500": "太平洋保险",
-    "95518": "中国人保财险",
+    "10086": "China Mobile",
+    "1008611": "China Mobile (balance)",
+    "10010": "China Unicom",
+    "10011": "China Unicom (top-up)",
+    "10000": "China Telecom",
+    "10001": "China Telecom (self-service)",
+    "10188": "Unicom Pay",
+    "12306": "China Railway 12306",
+    "95599": "Agricultural Bank of China",
+    "95588": "ICBC",
+    "95533": "China Construction Bank",
+    "95566": "Bank of China",
+    "95555": "China Merchants Bank",
+    "95511": "Ping An",
+    "95561": "Industrial Bank",
+    "95595": "China Everbright Bank",
+    "95559": "Bank of Communications",
+    "95508": "China Guangfa Bank",
+    "95528": "Shanghai Pudong Development Bank",
+    "95577": "Hua Xia Bank",
+    "95558": "CITIC Bank",
+    "95568": "China Minsheng Bank",
+    "95580": "Postal Savings Bank of China",
+    "95598": "State Grid",
+    "95500": "China Pacific Insurance",
+    "95518": "PICC Property",
 }
 
 _MOBILE_RE = re.compile(r"^(?:\+?86)?1\d{10}$")
 _DIGITS_RE = re.compile(r"\d")
 
+#: Generic labels that carry no real information, so callers may override them.
+GENERIC_LABELS = ("enterprise SMS", "mobile number", "international number")
+
 
 def normalize_number(number: str) -> str:
-    """去掉分隔符，保留可选的 `+` 前缀，便于比对。"""
+    """Strip separators but keep a leading `+`, for comparison."""
 
     text = (number or "").strip()
     plus = text.startswith("+")
@@ -56,7 +62,7 @@ def normalize_number(number: str) -> str:
 
 
 def _national(number: str) -> str:
-    """把 `+8613012345678` 归一化成 `13012345678`（仅用于查表）。"""
+    """Normalise `+8613012345678` to `13012345678` (for table lookup only)."""
 
     digits = "".join(ch for ch in number if ch.isdigit())
     if number.startswith("+86") and len(digits) == 13:
@@ -67,7 +73,7 @@ def _national(number: str) -> str:
 
 
 def classify_number(number: str) -> str:
-    """返回号码类别：`mobile` / `shortcode` / `enterprise` / `international` / `unknown`。"""
+    """Return the number class: mobile/shortcode/enterprise/international/unknown."""
 
     raw = (number or "").strip()
     if not raw:
@@ -89,7 +95,7 @@ def classify_number(number: str) -> str:
 
 
 def describe_number(number: str) -> str:
-    """给一个号码返回简短说明，未知时返回空串。"""
+    """Short human description for a number; empty string when unknown."""
 
     raw = (number or "").strip()
     if not raw:
@@ -108,9 +114,9 @@ def describe_number(number: str) -> str:
 
 
 def short_number(number: str, *, keep: int = 6) -> str:
-    """过长号码的缩写显示（保留头尾，中间用省略号）。"""
+    """Abbreviate a long number (head + tail with an ellipsis)."""
 
     text = (number or "").strip()
     if len(text) <= keep + 6:
         return text
-    return f"{text[:keep]}…{text[-4:]}"
+    return f"{text[:keep]}...{text[-4:]}"

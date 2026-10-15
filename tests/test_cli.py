@@ -11,7 +11,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timedelta
 from unittest import mock
 
-from f50_sms import cli, output, pager, query
+from f50_sms import cli, constants, output, pager, query
 from f50_sms.client import F50Client
 from f50_sms.errors import (
     F50AuthError,
@@ -122,7 +122,7 @@ class PasswordPromptTests(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(cli, "F50Client", return_value=client), \
              mock.patch.object(cli, "_can_prompt", return_value=prompt_available), \
-             mock.patch.object(cli.getpass, "getpass", return_value=secret) as prompt:
+             mock.patch.object(constants.getpass, "getpass", return_value=secret) as prompt:
             with redirect_stdout(out), redirect_stderr(err):
                 code = cli.main(["count"])
         return code, out.getvalue(), err.getvalue(), client, prompt
@@ -139,13 +139,13 @@ class PasswordPromptTests(unittest.TestCase):
         code, _, err, client, _ = self._run(prompt_available=True, secret="")
         self.assertEqual(code, F50AuthError.exit_code)
         self.assertIsNone(client.accepted_password)
-        self.assertIn("已取消", err)
+        self.assertIn("cancelled", err)
 
     def test_no_terminal_reports_instead_of_hanging(self):
         code, _, err, _, prompt = self._run(prompt_available=False, secret="hunter2")
         self.assertEqual(code, F50AuthError.exit_code)
         prompt.assert_not_called()
-        self.assertIn("没有提供密码", err)
+        self.assertIn("password is required", err)
 
 
 class TimeSpecTests(unittest.TestCase):
@@ -188,7 +188,7 @@ class TagExpansionTests(unittest.TestCase):
 
 class LabelTests(unittest.TestCase):
     def test_known_number(self):
-        self.assertEqual(describe_number("10010"), "中国联通")
+        self.assertEqual(describe_number("10010"), "China Unicom")
 
     def test_enterprise(self):
         self.assertEqual(describe_number("10690955998"), "enterprise SMS")
@@ -255,7 +255,7 @@ class ThreadTests(unittest.TestCase):
 
     def test_thread_label_prefers_known_number(self):
         messages = [Message.from_api(SAMPLE_PAYLOAD[1])]
-        self.assertEqual(query.thread_label(messages, "10010"), "中国联通")
+        self.assertEqual(query.thread_label(messages, "10010"), "China Unicom")
 
     def test_thread_label_falls_back_to_signature(self):
         messages = [Message.from_api(SAMPLE_PAYLOAD[0])]
@@ -305,7 +305,7 @@ class EndToEndTests(unittest.TestCase):
     def test_threads(self):
         code, out, _ = run_cli(["threads", "--color", "never"])
         self.assertEqual(code, 0)
-        self.assertIn("中国联通", out)
+        self.assertIn("China Unicom", out)
 
     def test_status_json(self):
         code, out, _ = run_cli(["status", "-f", "json"])
@@ -322,12 +322,12 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(code, 0)
             content = target.read_text(encoding="utf-8")
             self.assertTrue(content.startswith("id,time,direction"))
-            self.assertIn("已导出", err)
+            self.assertIn("exported", err)
 
     def test_doctor(self):
         code, out, _ = run_cli(["doctor", "--color", "never"])
         self.assertEqual(code, 0)
-        self.assertIn("接口连通", out)
+        self.assertIn("API reachable", out)
 
     def test_bad_time_spec_exits_nonzero(self):
         code, _, err = run_cli(["list", "--since", "刚才"])

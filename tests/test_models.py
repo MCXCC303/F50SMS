@@ -94,7 +94,7 @@ class MessageTests(unittest.TestCase):
         self.assertTrue(self._make(tag=TAG_READ).is_read)
         self.assertTrue(self._make(tag=TAG_SENT).is_sent)
         self.assertTrue(self._make(tag=TAG_DRAFT).is_draft)
-        self.assertEqual(self._make(tag=TAG_SENT).status_label, "已发送")
+        self.assertEqual(self._make(tag=TAG_SENT).status_label, "sent")
 
     def test_to_dict_round_trip(self):
         data = self._make().to_dict()

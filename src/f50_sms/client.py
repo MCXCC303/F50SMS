@@ -36,9 +36,9 @@
 因此不能把「字段缺失」当成「没有数据」，否则会安静地报告 0 条短信。
 本模块的策略是：
 
-1. 数据命令之前先用 `cmd=loginfo` 确认会话，必要时自动登录；
+1. 数据命令之前先用 `cmd=loginfo` 确认会话，必要时auto login；
 2. 响应缺少应有字段时判定为会话失效，重新登录后重试一次；
-3. 重试后仍缺字段，再查一次 `loginfo`：确认已登录才接受「确实为空」，
+3. 重试后仍缺字段，再查一次 `loginfo`：确认signed in才接受「确实为空」，
    否则抛 :class:`F50AuthError`，绝不返回静默的空结果。
 """
 
@@ -206,22 +206,22 @@ class F50Client:
                 pass
             if exc.code in (401, 403):
                 raise F50AuthError(
-                    f"路由器拒绝了请求（HTTP {exc.code}）。",
-                    hint="可能是会话失效，请检查密码或重启路由器后台。",
+                    f"the router refused the request (HTTP {exc.code}).",
+                    hint="the session may have expired; check the password or restart the web UI.",
                 ) from exc
             raise F50ProtocolError(
-                f"路由器返回 HTTP {exc.code}：{body[:200]!r}"
+                f"the router returned HTTP {exc.code}: {body[:200]!r}"
             ) from exc
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             raise F50ConnectionError(
-                f"无法连接路由器 {self.host}：{reason}",
-                hint="请确认电脑已连上 F50 的 WiFi，或改用 --host 指定地址。",
+                f"cannot reach the router at {self.host}: {reason}",
+                hint="make sure the machine is on the F50 WiFi, or point --host at a different address.",
             ) from exc
         except socket.timeout as exc:
             raise F50ConnectionError(
-                f"连接路由器 {self.host} 超时（{self.timeout:g}s）。",
-                hint="设备可能处于休眠，唤醒后重试；或用 --timeout 调大超时。",
+                f"timed out connecting to {self.host} after {self.timeout:g}s.",
+                hint="the device may be asleep; wake it and retry, or raise the limit with --timeout.",
             ) from exc
 
     def _request_json(self, path: str, params: Mapping[str, Any], *, post: bool = False) -> Dict[str, Any]:
@@ -233,11 +233,11 @@ class F50Client:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
             raise F50ProtocolError(
-                f"路由器返回的不是 JSON：{body[:200]!r}",
-                hint="若页面地址或端口被改动，请用 --host 指定正确的后台地址。",
+                f"the router did not return JSON: {body[:200]!r}",
+                hint="if the page address or port changed, point --host at the correct URL.",
             ) from exc
         if not isinstance(data, dict):
-            raise F50ProtocolError(f"路由器返回了意外的 JSON 结构：{data!r}")
+            raise F50ProtocolError(f"the router returned an unexpected JSON shape: {data!r}")
         return data
 
     # -- 命令封装 ----------------------------------------------------------
@@ -263,7 +263,7 @@ class F50Client:
         return not all(key in data for key in keys)
 
     def get_cmd(self, cmd: str, **params: Any) -> Dict[str, Any]:
-        """执行一条或多条只读 `cmd`，并保证结果来自已登录的会话。
+        """执行一条或多条只读 `cmd`，并保证结果来自signed in的会话。
 
         多条命令用逗号分隔时会自动补上 `multi_data=1`。
         """
@@ -281,15 +281,15 @@ class F50Client:
                 data = self._raw_get(cmd, params)
                 if self._incomplete(data, keys) and self._probe_loginfo() is not True:
                     raise F50AuthError(
-                        f"登录后仍未取到数据（缺少字段：{'、'.join(keys)}）。",
-                        hint="在浏览器里打开后台确认能看到短信，然后重试。",
+                        f"still no data after login (missing fields: {', '.join(keys)}).",
+                        hint="open the web UI in a browser to confirm the messages are there, then retry.",
                         needs_password=not self.has_password,
                     )
 
         if "Error" in data:
             raise F50AuthError(
-                f"路由器拒绝读取（{data.get('Error')}）。",
-                hint="请确认已连接到 F50 的局域网，并且后台未被重启。",
+                f"the router refused the read ({data.get('Error')}).",
+                hint="confirm you are on the F50 network and the web UI has not been restarted.",
             )
         return data
 
@@ -311,7 +311,7 @@ class F50Client:
 
     @property
     def logged_in(self) -> Optional[bool]:
-        """`True`/`False` 表示已知的登录状态，`None` 表示尚未检查。"""
+        """`True`/`False` 表示已知的login status，`None` 表示尚未检查。"""
 
         return self._session_ok
 
@@ -321,9 +321,8 @@ class F50Client:
         secret = password if password is not None else self.password
         if not secret:
             raise F50AuthError(
-                "需要登录路由器后台，但没有提供密码。",
-                hint="用 --password 传入，或设置环境变量 F50_SMS_PASSWORD，"
-                     "或执行 f50sms config set --password 保存到配置文件。",
+                "a password is required to reach the router, but none was provided.",
+                hint="pass it with --password, or set F50_SMS_PASSWORD, or save it once with: f50sms config set --password",
                 needs_password=True,
             )
 
@@ -334,8 +333,8 @@ class F50Client:
         ld = str(ld_data.get("LD", "") or "")
         if not ld:
             raise F50ProtocolError(
-                "路由器没有返回登录随机数（LD）。",
-                hint="固件版本可能不兼容，请用 f50sms doctor 查看详情。",
+                "the router did not return a login nonce (LD).",
+                hint="the firmware may be incompatible; run f50sms doctor for details.",
             )
 
         digest = sha256_upper(sha256_upper(secret) + ld)
@@ -353,19 +352,19 @@ class F50Client:
         self._session_ok = False
         if code == "3":
             raise F50AuthError(
-                "后台密码错误。",
-                hint="密码区分大小写；若已在网页端改过密码，请同步更新配置。",
+                "wrong router password.",
+                hint="the password is case-sensitive; update the config if you changed it in the web UI.",
                 needs_password=True,
             )
         if code == "2":
             raise F50AuthError(
-                "路由器已有其它用户登录，本次登录被拒绝。",
-                hint="先在浏览器里退出后台，或稍后重试。",
+                "another user is already signed in; this login was refused.",
+                hint="sign out in the browser first, or try again later.",
             )
-        raise F50AuthError(f"登录失败（result={code or '未知'}）。")
+        raise F50AuthError(f"login failed (result={code or 'unknown'}).")
 
     def _probe_loginfo(self) -> Optional[bool]:
-        """查一次 `loginfo`：`True` 已登录，`False` 未登录，`None` 无法判断。"""
+        """查一次 `loginfo`：`True` signed in，`False` not signed in，`None` 无法判断。"""
 
         try:
             info = self._raw_get("loginfo", {"multi_data": "1"})
@@ -380,9 +379,9 @@ class F50Client:
         return str(value) == "ok"
 
     def ensure_session(self, *, force: bool = False) -> None:
-        """确保处于登录态；未登录则自动登录。
+        """确保处于登录态；not signed in则auto login。
 
-        会话仍有效时不会白白登录一次，因此网页端已登录的情况下无需密码。
+        会话仍有效时不会白白登录一次，因此网页端signed in的情况下无需密码。
         """
 
         if self._session_ok and not force:
@@ -446,7 +445,7 @@ class F50Client:
             batch = data.get("messages", [])
             if not isinstance(batch, list):
                 raise F50ProtocolError(
-                    f"sms_data_total 返回了意外的 messages 字段：{batch!r}"
+                    f"sms_data_total returned an unexpected messages field: {batch!r}"
                 )
             if not batch:
                 break
@@ -480,7 +479,7 @@ class F50Client:
         return merge_messages(self.fetch_raw_messages(**kwargs))
 
     def fetch_capacity(self) -> Dict[str, Any]:
-        """返回短信存储容量（设备侧与 SIM 侧）。"""
+        """返回短信storage（设备侧与 SIM 侧）。"""
 
         raw = self.get_cmd("sms_capacity_info")
         integer = lambda key: _as_int(raw.get(key))  # noqa: E731 - 短小的局部工具

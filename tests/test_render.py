@@ -95,13 +95,13 @@ class MessageTableTests(unittest.TestCase):
     def test_render_without_colour(self):
         out = render_message_table([make()], palette=Palette(False), width=120)
         self.assertIn("10010", out)
-        self.assertIn("未读", out)
+        self.assertIn("unread", out)
         self.assertIn("示例", out)
 
     def test_card_contains_fields(self):
         card = render_message_card(make(), palette=Palette(False), width=80)
-        self.assertIn("时间", card)
-        self.assertIn("发件人", card)
+        self.assertIn("Time", card)
+        self.assertIn("From", card)
         self.assertIn("2026-10-13 08:30:55", card)
         for line in card.splitlines():
             self.assertEqual(text_width(line), text_width(card.splitlines()[0]))

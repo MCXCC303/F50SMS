@@ -31,11 +31,11 @@ TAG_SEND_FAILED = "3"
 TAG_DRAFT = "4"
 
 TAG_LABELS: Dict[str, str] = {
-    TAG_READ: "已读",
-    TAG_UNREAD: "未读",
-    TAG_SENT: "已发送",
-    TAG_SEND_FAILED: "发送失败",
-    TAG_DRAFT: "草稿",
+    TAG_READ: "read",
+    TAG_UNREAD: "unread",
+    TAG_SENT: "sent",
+    TAG_SEND_FAILED: "failed",
+    TAG_DRAFT: "draft",
 }
 
 #: tag 别名，供 CLI 的 --tag 选项使用（大小写不敏感）。
@@ -213,7 +213,7 @@ class Message:
 
     @property
     def status_label(self) -> str:
-        return TAG_LABELS.get(self.tag, f"未知({self.tag})" if self.tag else "未知")
+        return TAG_LABELS.get(self.tag, f"unknown ({self.tag})" if self.tag else "unknown")
 
     @property
     def signature(self) -> str:

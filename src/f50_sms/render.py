@@ -156,7 +156,7 @@ class Palette:
 
 
 def status_style(message: Message, palette: Palette) -> str:
-    """未读=粗体黄，已读=暗，已发送=绿，失败=红，草稿=青。"""
+    """unread=bold yellow, read=dim, sent=green, failed=red, draft=cyan."""
 
     label = message.status_label
     if message.is_unread:
@@ -270,7 +270,7 @@ def render_message_table(
     palette = palette or Palette(False)
     total_width = width or terminal_width()
 
-    headers = ["ID", "时间", "来源", "号码", "状态", "内容"]
+    headers = ["ID", "TIME", "SOURCE", "NUMBER", "STATE", "TEXT"]
     fixed = 2 + 19 + 2 + 12 + 2 + 14 + 2 + 4 + 2 + 4
     content_width = max(12, total_width - fixed)
     if full:
@@ -306,19 +306,19 @@ def render_message_card(message: Message, *, palette: Optional[Palette] = None, 
     inner = max(40, min(width or terminal_width(), 100)) - 4
 
     rows: List[tuple[str, str]] = [
-        ("时间", f"{message.timestamp_text} {message.offset_text}".strip() or message.raw_date or "—"),
+        ("Time", f"{message.timestamp_text} {message.offset_text}".strip() or message.raw_date or "—"),
     ]
     sender = sender_label(message)
-    rows.append(("发件人" if message.is_inbox else "收件人",
+    rows.append(("From" if message.is_inbox else "To",
                  f"{message.number}" + (f" · {sender}" if sender else "")))
-    rows.append(("状态", message.status_label))
+    rows.append(("State", message.status_label))
     if message.group_id:
-        rows.append(("分组", message.group_id))
+        rows.append(("Group", message.group_id))
     if message.received_all is False:
-        rows.append(("备注", "长短信未接收完整"))
+        rows.append(("Note", "long SMS not fully received"))
 
     label_width = max(text_width(label) for label, _ in rows) + 2
-    title = f"#{message.id}" if message.id else "短信"
+    title = f"#{message.id}" if message.id else "Message"
     dashes = max(0, inner - text_width(title) - 1)
     top = "╭─ " + palette.bold(title) + " " + "─" * dashes + "╮"
     bottom = "╰" + "─" * (inner + 2) + "╯"
@@ -328,7 +328,7 @@ def render_message_card(message: Message, *, palette: Optional[Palette] = None, 
         text = pad(label, label_width) + truncate(value, inner - label_width)
         lines.append("│ " + text + " " * max(0, inner - text_width(text)) + " │")
     lines.append("├" + "─" * (inner + 2) + "┤")
-    for line in (message.content or "（空）").splitlines() or [""]:
+    for line in (message.content or "(empty)").splitlines() or [""]:
         for chunk in _wrap(line, inner):
             lines.append("│ " + pad(chunk, inner) + " │")
     lines.append(bottom)
@@ -364,14 +364,14 @@ def render_thread(thread: Sequence[Message], *, palette: Optional[Palette] = Non
     bubble_width = max(24, min(total - 14, 72))
     lines: List[str] = []
     for message in thread:
-        who = "我" if message.is_outgoing else (sender_label(message) or message.number)
+        who = "me" if message.is_outgoing else (sender_label(message) or message.number)
         head = f"{message.timestamp_text}  {who}"
         if message.is_unread:
-            head += "  " + palette.style("未读", "bold", "bright_yellow")
+            head += "  " + palette.style("unread", "bold", "bright_yellow")
         if message.is_send_failed:
-            head += "  " + palette.red("发送失败")
+            head += "  " + palette.red("send failed")
         if message.is_draft:
-            head += "  " + palette.cyan("草稿")
+            head += "  " + palette.cyan("draft")
         lines.append(palette.dim(head))
         for chunk in _wrap(message.content or "", bubble_width):
             lines.append("  " + chunk)
@@ -387,7 +387,7 @@ def render_thread_table(
 ) -> str:
     palette = palette or Palette(False)
     total = width or terminal_width()
-    headers = ["号码", "来源", "条数", "未读", "最近时间", "摘要"]
+    headers = ["NUMBER", "SOURCE", "COUNT", "UNREAD", "LAST TIME", "PREVIEW"]
     fixed = 17 + 2 + 14 + 2 + 5 + 2 + 4 + 2 + 19 + 2
     preview_width = max(10, total - fixed)
 
@@ -440,16 +440,16 @@ def to_csv(messages: Sequence[Message]) -> str:
     return buffer.getvalue().rstrip("\n")
 
 
-def to_markdown(messages: Sequence[Message], *, title: str = "F50 短信导出") -> str:
+def to_markdown(messages: Sequence[Message], *, title: str = "F50 SMS export") -> str:
     lines = [f"# {title}", ""]
-    lines.append(f"共 {len(messages)} 条。")
+    lines.append(f"{len(messages)} messages.")
     lines.append("")
-    lines.append("| ID | 时间 | 方向 | 号码 | 来源 | 状态 | 内容 |")
+    lines.append("| ID | Time | Direction | Number | Source | State | Text |")
     lines.append("| --- | --- | --- | --- | --- | --- | --- |")
     for m in messages:
         content = m.content.replace("|", "\\|").replace("\n", " ")
         lines.append(
-            f"| {m.id} | {m.timestamp_text} | {'发出' if m.is_outgoing else '收到'} "
+            f"| {m.id} | {m.timestamp_text} | {'sent' if m.is_outgoing else 'received'} "
             f"| {m.number} | {sender_label(m)} | {m.status_label} | {content} |"
         )
     return "\n".join(lines)
@@ -500,20 +500,20 @@ def summarize(messages: Sequence[Message]) -> Dict[str, int]:
 
 def render_summary(stats: Dict[str, int], *, palette: Optional[Palette] = None) -> str:
     palette = palette or Palette(False)
-    parts = [f"共 {palette.bold(str(stats['total']))} 条"]
+    parts = [f"{palette.bold(str(stats['total']))} messages"]
     if stats["unread"]:
-        parts.append(palette.style(f"未读 {stats['unread']}", "bold", "bright_yellow"))
+        parts.append(palette.style(f"{stats['unread']} unread", "bold", "bright_yellow"))
     else:
-        parts.append("未读 0")
+        parts.append("0 unread")
     if stats["read"]:
-        parts.append(f"已读 {stats['read']}")
+        parts.append(f"{stats['read']} read")
     if stats["sent"]:
-        parts.append(palette.green(f"已发送 {stats['sent']}"))
+        parts.append(palette.green(f"{stats['sent']} sent"))
     if stats["failed"]:
-        parts.append(palette.red(f"发送失败 {stats['failed']}"))
+        parts.append(palette.red(f"{stats['failed']} failed"))
     if stats["draft"]:
-        parts.append(palette.cyan(f"草稿 {stats['draft']}"))
-    parts.append(f"会话 {stats['senders']}")
+        parts.append(palette.cyan(f"{stats['draft']} draft"))
+    parts.append(f"{stats['senders']} threads")
     return " · ".join(parts)
 
 

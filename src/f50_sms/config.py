@@ -101,41 +101,41 @@ def resolve_settings(
     # host
     env_host = os.environ.get(ENV_HOST)
     if host:
-        settings.host, sources["host"] = host, "命令行 --host"
+        settings.host, sources["host"] = host, "command line --host"
     elif env_host:
-        settings.host, sources["host"] = env_host, f"环境变量 {ENV_HOST}"
+        settings.host, sources["host"] = env_host, f"environment {ENV_HOST}"
     elif values.get("host"):
-        settings.host, sources["host"] = str(values["host"]), f"配置文件 {path}"
+        settings.host, sources["host"] = str(values["host"]), f"config file {path}"
     else:
-        settings.host, sources["host"] = DEFAULT_HOST, "内置默认值"
+        settings.host, sources["host"] = DEFAULT_HOST, "built-in default"
 
     # password
     env_password = os.environ.get(ENV_PASSWORD)
     if password:
-        settings.password, sources["password"] = password, "命令行 --password"
+        settings.password, sources["password"] = password, "command line --password"
     elif env_password:
-        settings.password, sources["password"] = env_password, f"环境变量 {ENV_PASSWORD}"
+        settings.password, sources["password"] = env_password, f"environment {ENV_PASSWORD}"
     elif values.get("password"):
-        settings.password, sources["password"] = str(values["password"]), f"配置文件 {path}"
+        settings.password, sources["password"] = str(values["password"]), f"config file {path}"
     else:
-        settings.password, sources["password"] = None, "未提供（会话仍有效时可以不填）"
+        settings.password, sources["password"] = None, "not set (not needed while the session is valid)"
 
     # timeout
     env_timeout = os.environ.get(ENV_TIMEOUT)
     if timeout is not None:
-        settings.timeout, sources["timeout"] = float(timeout), "命令行 --timeout"
+        settings.timeout, sources["timeout"] = float(timeout), "command line --timeout"
     elif env_timeout:
         try:
-            settings.timeout, sources["timeout"] = float(env_timeout), f"环境变量 {ENV_TIMEOUT}"
+            settings.timeout, sources["timeout"] = float(env_timeout), f"environment {ENV_TIMEOUT}"
         except ValueError:
-            settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "内置默认值"
+            settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "built-in default"
     elif values.get("timeout"):
         try:
-            settings.timeout, sources["timeout"] = float(values["timeout"]), f"配置文件 {path}"
+            settings.timeout, sources["timeout"] = float(values["timeout"]), f"config file {path}"
         except (TypeError, ValueError):
-            settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "内置默认值"
+            settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "built-in default"
     else:
-        settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "内置默认值"
+        settings.timeout, sources["timeout"] = DEFAULT_TIMEOUT, "built-in default"
 
     settings.sources = sources
     return settings

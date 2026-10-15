@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
+from .constants import PROG, PROMPT_PASSWORD, prompt_password as _prompt_password
 from .client import F50Client
 from .config import config_path, load_config, resolve_settings, save_config
 from .errors import F50Error, F50NotFoundError
@@ -37,7 +38,7 @@ from .render import (
 )
 
 # ---------------------------------------------------------------------------
-# 各子命令
+# Subcommand handlers
 # ---------------------------------------------------------------------------
 
 
@@ -57,7 +58,7 @@ def cmd_list(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         if fmt in DATA_FORMATS:
             out.emit("[]" if fmt == "json" else "")
         else:
-            out.note("没有符合条件的短信。")
+            out.note("no messages matched.")
         return 0
     out.emit(render_messages(messages, fmt, out, full=args.full))
     if fmt not in DATA_FORMATS and not args.quiet:
@@ -67,7 +68,7 @@ def cmd_list(client: F50Client, args: argparse.Namespace, out: Output) -> int:
 
 def cmd_show(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     if not args.id and not args.from_number:
-        raise F50NotFoundError("请给出短信 ID，或用 --from 指定号码。", hint="例如 f50sms show 57")
+        raise F50NotFoundError("give a message id, or use --from with a number.", hint="for example: f50sms show 57")
     messages = _load_messages(client, args)
     target: Optional[Message] = None
     if args.id:
@@ -78,14 +79,14 @@ def cmd_show(client: F50Client, args: argparse.Namespace, out: Output) -> int:
                 break
         if target is None:
             raise F50NotFoundError(
-                f"没有找到 ID 为 {args.id} 的短信。",
-                hint="用 f50sms list 查看可用的 ID。",
+                f"no message with id {args.id}.",
+                hint="run f50sms list to see available ids.",
             )
     else:
         tail = re.sub(r"\D", "", args.from_number)[-8:]
         candidates = [m for m in messages if re.sub(r"\D", "", m.number).endswith(tail)]
         if not candidates:
-            raise F50NotFoundError(f"没有找到与 {args.from_number} 相关的短信。")
+            raise F50NotFoundError(f"no messages from or to {args.from_number}.")
         candidates.sort(key=lambda m: m.sort_key)
         target = candidates[-1]
 
@@ -113,12 +114,12 @@ def cmd_thread(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     messages = _load_messages(client, args)
     tail = re.sub(r"\D", "", args.number)[-8:]
     if not tail:
-        raise F50NotFoundError(f"无效的号码：{args.number!r}")
-    # 后 8 位可能撞号，优先精确匹配。
+        raise F50NotFoundError(f"not a usable number: {args.number!r}")
+    # Trailing digits can collide, so prefer an exact match first.
     exact = [m for m in messages if normalize_number(m.number) == normalize_number(args.number)]
     selected = exact or [m for m in messages if re.sub(r"\D", "", m.number).endswith(tail)]
     if not selected:
-        raise F50NotFoundError(f"没有与 {args.number} 相关的短信。")
+        raise F50NotFoundError(f"no messages with {args.number}.")
     selected.sort(key=lambda m: m.sort_key)
 
     fmt = _resolve_format(args, args.format, "chat")
@@ -157,17 +158,17 @@ def cmd_threads(client: F50Client, args: argparse.Namespace, out: Output) -> int
                              t["latest_time"], t["latest_content"]])
         out.emit(buffer.getvalue().rstrip("\n"))
     elif fmt == "markdown":
-        lines = ["| 号码 | 来源 | 条数 | 未读 | 最近时间 |", "| --- | --- | --- | --- | --- |"]
+        lines = ["| Number | Source | Count | Unread | Last Time |", "| --- | --- | --- | --- | --- |"]
         for t in threads:
             lines.append(f"| {t['number']} | {t['label']} | {t['count']} | {t['unread']} | {t['latest_time']} |")
         out.emit("\n".join(lines))
     else:
         if not threads:
-            out.note("没有会话。")
+            out.note("no conversations.")
             return 0
         out.emit(render_thread_table(threads, palette=out.palette, width=out.width))
         if not args.quiet:
-            out.note(f"共 {len(threads)} 个会话")
+            out.note(f"{len(threads)} conversations")
     return 0
 
 
@@ -202,19 +203,19 @@ def cmd_status(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     palette = out.palette
     signal = status.get("signalbar") or "-"
     rows = [
-        ("设备状态", status.get("modem_main_state") or "—"),
-        ("网络", f"{status.get('network_type') or '—'} · {status.get('network_provider') or '—'}"),
-        ("信号", f"{signal}/5" + (f" · RSRP {status['rsrp']} dBm" if status.get("rsrp") else "")),
-        ("频段", status.get("band") or "—"),
-        ("连接", status.get("ppp_status") or "—"),
-        ("WAN IP", status.get("wan_ip") or "—"),
-        ("本机号码", status.get("phone_number") or "—"),
-        ("ICCID", status.get("iccid") or "—"),
-        ("IMEI", status.get("imei") or "—"),
-        ("固件", f"{status.get('firmware') or '—'} / {status.get('hardware') or '—'}"),
-        ("短信未读", palette.style(str(unread), "bold", "bright_yellow") if unread else "0"),
-        ("短信容量", f"{capacity['nv_used']}/{capacity['nv_total']}（设备）"
-                     + (f" · {capacity['sim_used']}/{capacity['sim_total']}（SIM）" if capacity["sim_total"] else "")),
+        ("Modem", status.get("modem_main_state") or "-"),
+        ("Network", f"{status.get('network_type') or '-'} · {status.get('network_provider') or '-'}"),
+        ("Signal", f"{signal}/5" + (f" · RSRP {status['rsrp']} dBm" if status.get("rsrp") else "")),
+        ("Band", status.get("band") or "-"),
+        ("Link", status.get("ppp_status") or "-"),
+        ("WAN IP", status.get("wan_ip") or "-"),
+        ("Number", status.get("phone_number") or "-"),
+        ("ICCID", status.get("iccid") or "-"),
+        ("IMEI", status.get("imei") or "-"),
+        ("Firmware", f"{status.get('firmware') or '-'} / {status.get('hardware') or '-'}"),
+        ("Unread", palette.style(str(unread), "bold", "bright_yellow") if unread else "0"),
+        ("SMS store", f"{capacity['nv_used']}/{capacity['nv_total']} (device)"
+                      + (f" · {capacity['sim_used']}/{capacity['sim_total']} (SIM)" if capacity["sim_total"] else "")),
     ]
     label_width = max(text_width(label) for label, _ in rows)
     lines = [
@@ -244,7 +245,7 @@ def cmd_export(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         if path.parent and str(path.parent) not in ("", "."):
             path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text + ("" if text.endswith("\n") else "\n"), encoding="utf-8")
-        out.note(f"已导出 {len(messages)} 条短信到 {path}")
+        out.note(f"exported {len(messages)} messages to {path}")
     else:
         out.emit(text)
     return 0
@@ -260,14 +261,14 @@ def cmd_watch(client: F50Client, args: argparse.Namespace, out: Output) -> int:
         for message in reversed(backlog):
             out.emit(render_message_card(message, palette=out.palette, width=out.width))
             out.emit("")
-    out.note(f"正在监听新短信（每 {interval:g} 秒一次，Ctrl-C 退出）…")
+    out.note(f"watching for new messages (every {interval:g}s, Ctrl-C to stop)...")
 
     while True:
         time.sleep(interval)
         try:
             messages = client.fetch_messages()
         except F50Error as exc:
-            out.note(f"读取失败：{exc}")
+            out.note(f"read failed: {exc}")
             continue
         fresh = [m for m in messages if m.id not in known]
         if fresh:
@@ -290,33 +291,33 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     if action == "unset":
         if path.exists():
             path.unlink()
-            out.note(f"已删除 {path}")
+            out.note(f"deleted {path}")
         else:
-            out.note("配置文件不存在，无需删除。")
+            out.note("no config file to delete.")
         return 0
     if action == "set":
         updates = {}
         if args.host:
             updates["host"] = args.host
         if args.password is PROMPT_PASSWORD:
-            secret = _prompt_password("要保存的后台密码: ")
+            secret = _prompt_password("Password to save: ")
             if not secret:
-                raise F50NotFoundError("没有输入密码，已取消。")
+                raise F50NotFoundError("no password entered; cancelled.")
             updates["password"] = secret
         elif args.password:
             updates["password"] = args.password
         if args.timeout is not None:
             updates["timeout"] = args.timeout
         if not updates:
-            raise F50NotFoundError("没有提供要保存的配置项。", hint="例如 f50sms config set --password")
+            raise F50NotFoundError("nothing to save.", hint="for example: f50sms config set --password")
         try:
             saved = save_config(updates, args.config)
         except OSError as exc:
             raise F50NotFoundError(
-                f"无法写入配置文件 {path}：{exc.strerror or exc}",
-                hint="换一个可写路径（--config），或者改用环境变量 F50_SMS_PASSWORD。",
+                f"cannot write the config file {path}: {exc.strerror or exc}",
+                hint="choose a writable path (--config), or use the F50_SMS_PASSWORD environment variable.",
             ) from exc
-        out.note(f"已写入 {saved}")
+        out.note(f"wrote {saved}")
         for key, value in updates.items():
             shown = "******" if key == "password" else value
             out.note(f"  {key} = {shown}")
@@ -331,13 +332,13 @@ def cmd_config(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     )
     stored = load_config(args.config)
     rows = [
-        ("配置文件", str(path) + ("" if path.exists() else "（不存在）")),
+        ("Config file", str(path) + ("" if path.exists() else " (not present)")),
         ("host", f"{settings.host}    ← {settings.sources.get('host', '')}"),
-        ("password", ("******" if settings.password else "（未设置）") + f"    ← {settings.sources.get('password', '')}"),
+        ("password", ("******" if settings.password else "(not set)") + f"    ← {settings.sources.get('password', '')}"),
         ("timeout", f"{settings.timeout:g}s    ← {settings.sources.get('timeout', '')}"),
     ]
     if stored:
-        rows.append(("文件内容", ", ".join(sorted(stored))))
+        rows.append(("Keys in file", ", ".join(sorted(stored))))
     label_width = max(text_width(label) for label, _ in rows)
     out.emit("\n".join(pad(label, label_width) + "  " + value for label, value in rows))
     return 0
@@ -349,69 +350,69 @@ def cmd_doctor(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     warn = lambda text: palette.yellow("! " + text)   # noqa: E731
     fail = lambda text: palette.red("✘ " + text)      # noqa: E731
 
-    lines: List[str] = [f"目标地址      {client.host}"]
+    lines: List[str] = [f"Target        {client.host}"]
     settings = resolve_settings(
         host=_opt(args, "host"),
         password=_opt(args, "password"),
         timeout=_opt(args, "timeout"),
         config_file=args.config,
     )
-    lines.append(f"配置文件      {settings.config_file}")
+    lines.append(f"Config file   {settings.config_file}")
 
-    # 1. 连通性
+    # 1. reachability
     try:
         elapsed = client.ping()
-        lines.append(ok(f"接口连通      cmd=RD 往返 {elapsed * 1000:.0f} ms"))
+        lines.append(ok(f"API reachable  cmd=RD round trip {elapsed * 1000:.0f} ms"))
     except F50Error as exc:
-        lines.append(fail(f"接口不可达    {exc}"))
+        lines.append(fail(f"API unreachable {exc}"))
         out.emit("\n".join(lines))
         return 1
 
-    # 2. 登录态。读取短信同样需要会话，这里如实区分三种情况。
-    lines.append(f"密码来源      {settings.sources.get('password', '')}")
+    # 2. Session state. Reading SMS needs one too, so report all three cases honestly.
+    lines.append(f"Password from {settings.sources.get('password', '')}")
     logged = client.check_login()
     if logged is True:
-        lines.append(ok("登录状态      已登录（会话仍有效，本次无需密码）"))
+        lines.append(ok("Signed in     session still valid, no password needed"))
     elif logged is False:
-        lines.append(warn("登录状态      未登录"))
+        lines.append(warn("Signed in     no, not signed in"))
         if settings.password:
             try:
                 client.login()
-                lines.append(ok("自动登录      成功"))
+                lines.append(ok("Auto login    success"))
             except F50Error as exc:
-                lines.append(fail(f"自动登录      失败：{exc}"))
+                lines.append(fail(f"Auto login    failed: {exc}"))
         else:
-            lines.append(fail("自动登录      缺少密码"))
-            lines.append("              用 --password、F50_SMS_PASSWORD 或 "
-                         f"{PROG} config set --password 提供")
+            lines.append(fail("Auto login    no password available"))
+            lines.append("              supply it with --password, F50_SMS_PASSWORD or "
+                         f"{PROG} config set --password")
     else:
-        lines.append(warn("登录状态      无法判断（loginfo 无响应）"))
+        lines.append(warn("Signed in     unknown (loginfo gave no answer)"))
 
-    # 3. 短信功能
+    # 3. SMS features
     try:
         flags = client.fetch_flags()
-        lines.append(ok(f"短信就绪      modem={flags.get('modem_main_state') or '?'}"))
+        lines.append(ok(f"SMS ready     modem={flags.get('modem_main_state') or '?'}"))
     except F50Error as exc:
-        lines.append(fail(f"短信就绪      读取失败：{exc}"))
+        lines.append(fail(f"SMS ready     read failed: {exc}"))
 
     try:
         capacity = client.fetch_capacity()
-        lines.append(ok(f"存储容量      设备 {capacity['nv_used']}/{capacity['nv_total']}"
-                        f"，SIM {capacity['sim_used']}/{capacity['sim_total']}"))
+        lines.append(ok(f"SMS store     device {capacity['nv_used']}/{capacity['nv_total']}"
+                        f", SIM {capacity['sim_used']}/{capacity['sim_total']}"))
     except F50Error as exc:
-        lines.append(fail(f"存储容量      读取失败：{exc}"))
+        lines.append(fail(f"SMS store     read failed: {exc}"))
 
     try:
         messages = client.fetch_messages()
         stats = summarize(messages)
-        lines.append(ok(f"短信读取      {stats['total']} 条，未读 {stats['unread']}，"
-                        f"会话 {stats['senders']}"))
+        lines.append(ok(f"SMS read      {stats['total']} messages, {stats['unread']} unread,"
+                        f"{stats['senders']} conversations"))
         if messages:
             newest = messages[0]
-            lines.append(f"              最新一条：#{newest.id} {newest.timestamp_text} "
+            lines.append(f"              latest: #{newest.id} {newest.timestamp_text} "
                          f"{newest.number} {truncate(newest.content, 30)}")
     except F50Error as exc:
-        lines.append(fail(f"短信读取      失败：{exc}"))
+        lines.append(fail(f"SMS read      failed: {exc}"))
 
     out.emit("\n".join(lines))
     return 0

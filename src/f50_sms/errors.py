@@ -1,16 +1,17 @@
-"""本工具可能抛出的异常类型。
+"""Exception types raised by f50-sms.
 
-所有异常都继承自 :class:`F50Error`，CLI 只需捕获这一个基类即可给出友好提示。
+Every exception inherits from :class:`F50Error` so the CLI only needs to catch
+one base class to print a friendly message.
 
-退出码约定：`0` 成功，`2` 命令行用法错误（沿用 argparse 的约定），
-其余从 `3` 起按下面的类依次排列，互不重叠。
+Exit codes: `0` success, `2` command-line usage error (argparse convention),
+and `3` upward for the domain errors below, kept non-overlapping.
 """
 
 from __future__ import annotations
 
 
 class F50Error(Exception):
-    """所有 f50-sms 异常的基类。"""
+    """Base class for every f50-sms error."""
 
     exit_code = 1
 
@@ -19,23 +20,23 @@ class F50Error(Exception):
         self.message = message
         self.hint = hint
 
-    def __str__(self) -> str:  # pragma: no cover - 简单委托
+    def __str__(self) -> str:  # pragma: no cover - trivial delegation
         if self.hint:
-            return f"{self.message}\n提示：{self.hint}"
+            return f"{self.message}" + chr(10) + f"hint: {self.hint}"
         return self.message
 
 
 class F50ConnectionError(F50Error):
-    """无法连接到路由器（网络不可达、超时、DNS 失败等）。"""
+    """Cannot reach the router (network down, timeout, DNS failure, ...)."""
 
     exit_code = 3
 
 
 class F50AuthError(F50Error):
-    """需要登录、密码错误或登录被拒绝。
+    """Login required, wrong password, or the login was rejected.
 
-    `needs_password=True` 表示「给个密码就能继续」。CLI 会据此交互式询问
-    密码并自动重试，而不是直接报错退出。
+    `needs_password=True` means "a password would let us continue". The CLI
+    uses that to prompt for the password and retry instead of failing outright.
     """
 
     exit_code = 4
@@ -46,12 +47,12 @@ class F50AuthError(F50Error):
 
 
 class F50ProtocolError(F50Error):
-    """路由器返回了无法解析或不符合预期的数据。"""
+    """The router returned data we could not parse or that is out of shape."""
 
     exit_code = 5
 
 
 class F50NotFoundError(F50Error):
-    """没有找到符合条件的本地查询结果（例如指定的短信 ID）。"""
+    """No local result matched (e.g. the requested message id)."""
 
     exit_code = 6
