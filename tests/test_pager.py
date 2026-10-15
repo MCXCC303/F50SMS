@@ -57,7 +57,39 @@ class EnvironmentTests(unittest.TestCase):
         self.assertEqual(pager.pager_environment({"LESS": "-S"})["LESS"], "-S")
 
 
+class RowCountTests(unittest.TestCase):
+    """Row counting must account for wrapping, not just newlines."""
+
+    def test_counts_newlines_when_no_width(self):
+        self.assertEqual(pager.count_rows("a\nb\nc", 0), 3)
+
+    def test_trailing_newline_adds_no_row(self):
+        self.assertEqual(pager.count_rows("a\nb\n", 0), 2)
+
+    def test_long_line_wraps_into_many_rows(self):
+        self.assertEqual(pager.count_rows("x" * 250, 100), 3)
+
+    def test_empty_text_is_zero_rows(self):
+        self.assertEqual(pager.count_rows("", 80), 0)
+
+    def test_blank_lines_still_occupy_a_row(self):
+        self.assertEqual(pager.count_rows("a\n\nb", 80), 3)
+
+    def test_measure_function_accounts_for_double_width(self):
+        # 50 CJK characters are 100 columns wide.
+        text = "中" * 50
+        self.assertEqual(pager.count_rows(text, 100, lambda s: len(s) * 2), 1)
+        self.assertEqual(pager.count_rows(text, 40, lambda s: len(s) * 2), 3)
+
+
 class ThresholdTests(unittest.TestCase):
+    def test_a_wrapping_line_can_trigger_paging(self):
+        # Two logical lines, but six rows once the long one wraps.
+        text = "MESSAGE:\n" + "x" * 500
+        self.assertEqual(pager.count_rows(text, 100), 6)
+        self.assertTrue(pager.needs_paging(text, 5, 100))
+        self.assertFalse(pager.needs_paging(text, 6, 100))
+
     def test_short_output_needs_no_pager(self):
         self.assertFalse(pager.needs_paging("a\nb", 2))
 

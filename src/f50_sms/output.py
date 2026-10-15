@@ -20,6 +20,7 @@ from .render import (
     render_message_table,
     sender_label,
     terminal_width,
+    text_width,
     to_json,
 )
 
@@ -60,7 +61,7 @@ class Output:
             return False
         if self.pager_mode == "always":
             return True
-        return pager.needs_paging(payload, self.height)
+        return pager.count_rows(payload, self.width, text_width) > self.height
 
     def _is_tty(self) -> bool:
         try:
@@ -82,7 +83,7 @@ def resolve_format(args: Any, requested: Optional[str], human_default: str) -> s
         return requested
     if sys.stdout.isatty():
         return human_default
-    return "plain" if human_default in ("table", "card", "chat") else human_default
+    return "plain" if human_default in ("table", "text", "chat") else human_default
 
 
 def render_messages(

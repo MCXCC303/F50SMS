@@ -26,7 +26,7 @@ from .query import build_threads, filter_messages
 from .render import (
     EXPORTERS,
     pad,
-    render_message_card,
+    render_message_detail,
     render_summary,
     render_thread,
     render_thread_table,
@@ -114,7 +114,7 @@ def cmd_view(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     elif fmt == "plain":
         out.emit(messages_plain([target]))
     else:
-        out.emit(render_message_card(target, palette=out.palette, width=out.width))
+        out.emit(render_message_detail(target))
     return 0
 
 
@@ -277,7 +277,7 @@ def cmd_watch(client: F50Client, args: argparse.Namespace, out: Output) -> int:
     if args.backlog > 0:
         backlog = [m for m in client.fetch_messages()][: args.backlog]
         for message in reversed(backlog):
-            out.emit(render_message_card(message, palette=out.palette, width=out.width))
+            out.emit(render_message_detail(message))
             out.emit("")
     out.note(f"watching for new messages (every {interval:g}s, Ctrl-C to stop)...")
 
@@ -293,7 +293,7 @@ def cmd_watch(client: F50Client, args: argparse.Namespace, out: Output) -> int:
             fresh.sort(key=lambda m: m.sort_key)
             for message in fresh:
                 known.add(message.id)
-                out.emit(render_message_card(message, palette=out.palette, width=out.width))
+                out.emit(render_message_detail(message))
                 out.emit("")
             last_id = max([last_id] + [m.numeric_id or 0 for m in fresh])
         if args.once:

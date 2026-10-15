@@ -318,39 +318,32 @@ def render_message_table(
     )
 
 
-def render_message_card(message: Message, *, palette: Optional[Palette] = None, width: Optional[int] = None) -> str:
-    """单条短信的详情卡片。"""
+def render_message_detail(message: Message) -> str:
+    """One message as a plain, formatted flow.
 
-    palette = palette or Palette(False)
-    inner = max(40, min(width or terminal_width(), 100)) - 4
+    Deliberately borderless and colourless: a header of KEY<TAB>value lines
+    followed by the body, so the output stays readable when piped, paged, or
+    copied out of a terminal.
+    """
 
-    rows: List[tuple[str, str]] = [
-        ("Time", f"{message.timestamp_text} {message.offset_text}".strip() or message.raw_date or "—"),
-    ]
+    when = f"{message.timestamp_text} {message.offset_text}".strip() or message.raw_date
     sender = sender_label(message)
-    rows.append(("From" if message.is_inbox else "To",
-                 f"{message.number}" + (f" · {sender}" if sender else "")))
-    rows.append(("State", message.status_label))
+
+    fields: List[tuple[str, str]] = [
+        ("ID", "#" + message.short_id if message.id else ""),
+        ("TIME", when),
+        ("NUMBER", message.number),
+        ("SOURCE", sender),
+        ("STATE", message.status_label),
+    ]
     if message.group_id:
-        rows.append(("Group", message.group_id))
+        fields.append(("GROUP", message.group_id))
     if message.received_all is False:
-        rows.append(("Note", "long SMS not fully received"))
+        fields.append(("NOTE", "long SMS not fully received"))
 
-    label_width = max(text_width(label) for label, _ in rows) + 2
-    title = f"#{message.short_id}" if message.id else "Message"
-    dashes = max(0, inner - text_width(title) - 1)
-    top = "╭─ " + palette.bold(title) + " " + "─" * dashes + "╮"
-    bottom = "╰" + "─" * (inner + 2) + "╯"
-
-    lines = [top]
-    for label, value in rows:
-        text = pad(label, label_width) + truncate(value, inner - label_width)
-        lines.append("│ " + text + " " * max(0, inner - text_width(text)) + " │")
-    lines.append("├" + "─" * (inner + 2) + "┤")
-    for line in (message.content or "(empty)").splitlines() or [""]:
-        for chunk in _wrap(line, inner):
-            lines.append("│ " + pad(chunk, inner) + " │")
-    lines.append(bottom)
+    lines = [f"{name}\t{value}" for name, value in fields if value != ""]
+    lines.append("MESSAGE:")
+    lines.append(message.content or "(empty)")
     return "\n".join(lines)
 
 

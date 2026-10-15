@@ -1,7 +1,7 @@
 """Relative time wording, following the style used by the GitHub CLI.
 
 A list of timestamps is far easier to scan as "about 3 hours ago" than as a
-wall of full dates, so list output uses this by default while the detail card
+wall of full dates, so list output uses this by default while the detail view
 keeps the exact timestamp.
 
 Only the phrasing is implemented here; nothing in this module touches the

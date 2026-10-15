@@ -100,13 +100,34 @@ def terminal_height(default: int = 24) -> int:
         return default
 
 
-def needs_paging(text: str, height: int) -> bool:
-    """内容是否超过一屏。"""
+def count_rows(text: str, width: int, measure=None) -> int:
+    """How many terminal rows the text occupies once it wraps.
+
+    A single message body can be one very long line, so counting newlines
+    understates the height badly. Pass a `measure` that returns the display
+    width of a string (double width for CJK) to account for wrapping.
+
+    Without a width the newline count is returned.
+    """
+
+    measure = measure or len
+    if not text:
+        return 0
+    body = text[:-1] if text.endswith("\n") else text
+    if width <= 0:
+        return body.count("\n") + 1
+    rows = 0
+    for line in body.split("\n"):
+        rows += max(1, (measure(line) + width - 1) // width)
+    return rows
+
+
+def needs_paging(text: str, height: int, width: int = 0, measure=None) -> bool:
+    """Whether the text is taller than one screen."""
 
     if height <= 0:
         return True
-    lines = text.count("\n") + (0 if text.endswith("\n") else 1)
-    return lines > height
+    return count_rows(text, width, measure) > height
 
 
 def run_pager(

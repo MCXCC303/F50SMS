@@ -42,7 +42,7 @@ from .expressions import SORT_KEYS
 from .output import Output
 
 LIST_FORMATS = ("table", "plain", "json", "jsonl", "csv", "markdown")
-SHOW_FORMATS = ("card", "plain", "json")
+SHOW_FORMATS = ("text", "plain", "json")
 THREAD_FORMATS = ("chat", "table", "plain", "json", "jsonl", "csv", "markdown")
 THREADS_FORMATS = ("table", "json", "csv", "markdown")
 STATUS_FORMATS = ("table", "json")
@@ -111,7 +111,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     view_parser.add_argument("id", nargs="?", help="short id from the ID column in list")
     view_parser.add_argument("--from", dest="from_number", metavar="NUMBER", help="latest message from this number")
-    _add_format_option(view_parser, SHOW_FORMATS, default="card")
+    _add_format_option(view_parser, SHOW_FORMATS, default="text")
 
     # thread ---------------------------------------------------------------
     thread_parser = subparsers.add_parser(

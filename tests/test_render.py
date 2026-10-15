@@ -9,7 +9,7 @@ from f50_sms.models import Message
 from f50_sms.render import (
     Palette,
     pad,
-    render_message_card,
+    render_message_detail,
     render_message_table,
     render_table,
     summarize,
@@ -107,17 +107,38 @@ class MessageTableTests(unittest.TestCase):
         self.assertIn("unread", out)
         self.assertIn("示例", out)
 
-    def test_card_contains_fields(self):
-        card = render_message_card(make(), palette=Palette(False), width=80)
-        self.assertIn("Time", card)
-        self.assertIn("From", card)
-        self.assertIn("2026-10-13 08:30:55", card)
-        for line in card.splitlines():
-            self.assertEqual(text_width(line), text_width(card.splitlines()[0]))
+class MessageDetailTests(unittest.TestCase):
+    """The detail view is a plain KEY<TAB>value flow with no borders."""
 
-    def test_card_wraps_long_content(self):
-        card = render_message_card(make(content="很长的内容" * 40), palette=Palette(False), width=60)
-        self.assertGreater(len(card.splitlines()), 6)
+    def test_header_fields_are_tab_separated(self):
+        text = render_message_detail(make())
+        lines = text.splitlines()
+        self.assertEqual(lines[0].split("\t")[0], "ID")
+        self.assertTrue(lines[0].split("\t")[1].startswith("#"))
+        self.assertEqual(lines[1].split("\t"), ["TIME", "2026-10-13 08:30:55 +08:00"])
+        self.assertEqual(lines[2].split("\t"), ["NUMBER", "10010"])
+        self.assertEqual(lines[3].split("\t")[0], "SOURCE")
+        self.assertEqual(lines[4].split("\t"), ["STATE", "unread"])
+
+    def test_message_body_follows_its_marker(self):
+        text = render_message_detail(make(content="hello body"))
+        lines = text.splitlines()
+        index = lines.index("MESSAGE:")
+        self.assertEqual(lines[index + 1], "hello body")
+
+    def test_no_box_drawing_characters(self):
+        text = render_message_detail(make())
+        for ch in "╭╮╰╯│─├┤":
+            self.assertNotIn(ch, text)
+
+    def test_long_body_is_not_wrapped_or_truncated(self):
+        body = "很长的内容" * 40
+        text = render_message_detail(make(content=body))
+        self.assertIn(body, text)
+
+    def test_optional_fields_appear_only_when_set(self):
+        self.assertNotIn("GROUP", render_message_detail(make()))
+        self.assertIn("GROUP", render_message_detail(make(draft_group_id="7")))
 
 
 class GhStyleHeaderTests(unittest.TestCase):
