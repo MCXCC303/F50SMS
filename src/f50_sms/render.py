@@ -98,6 +98,7 @@ _CODES = {
     "bright_yellow": "93",
     "bright_cyan": "96",
     "bright_white": "97",
+    "underline": "4",
 }
 
 
@@ -133,6 +134,9 @@ class Palette:
     # 便捷方法
     def bold(self, text: str) -> str:
         return self.style(text, "bold")
+
+    def underline(self, text: str) -> str:
+        return self.style(text, "underline")
 
     def dim(self, text: str) -> str:
         return self.style(text, "dim")
@@ -233,13 +237,23 @@ def render_table(
 
     out: List[str] = []
     if header_line:
-        last_index = len(headers) - 1
-        header_cells = [
-            palette.bold(h if i == last_index else pad(h, widths[i]))
-            for i, h in enumerate(headers)
-        ]
-        out.append(separator.join(header_cells))
-        out.append(separator.join(palette.dim("─" * widths[i]) for i in range(len(headers))))
+        if palette.enabled:
+            # Like the GitHub CLI: every header cell is padded to its column
+            # width and underlined, which draws the rule as part of the text.
+            out.append(separator.join(
+                palette.underline(pad(h, widths[i])) for i, h in enumerate(headers)
+            ))
+        else:
+            # Without styles an underlined header renders as plain text, so a
+            # literal rule keeps the columns readable.
+            last_index = len(headers) - 1
+            out.append(separator.join(
+                h if i == last_index else pad(h, widths[i])
+                for i, h in enumerate(headers)
+            ))
+            out.append(separator.join(
+                "─" * widths[i] for i in range(len(headers))
+            ))
 
     for row in cells_rows:
         parts: List[str] = []

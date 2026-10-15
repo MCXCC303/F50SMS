@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 
 from f50_sms.models import Message
@@ -218,6 +219,44 @@ class GhStyleHeaderTests(unittest.TestCase):
         out = render_message_table([make()], palette=Palette(False))
         row = out.splitlines()[2]
         self.assertTrue(row.startswith("#"))
+
+    # -- the underlined variant, used whenever styles are available --------
+
+    @staticmethod
+    def _strip(text):
+        return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+    def test_styled_header_is_underlined_instead_of_ruled(self):
+        out = render_message_table([make()], palette=Palette(True))
+        lines = out.splitlines()
+        self.assertIn("\x1b[4m", lines[0])
+        self.assertNotIn("\u2500", out)
+        # The line after the header is data, not a rule.
+        self.assertTrue(self._strip(lines[1]).startswith("#"))
+
+    def test_underline_covers_each_column_width(self):
+        # gh pads every header cell, including the last, so the underline runs
+        # the full width of its column. Fixed widths make this measurable:
+        # column 0 is 4 wide ("1234"), column 1 is 5 wide ("xxxxx").
+        text = render_table(["AB", "CD"], [["1234", "xxxxx"]], palette=Palette(True))
+        header = self._strip(text.splitlines()[0])
+        self.assertEqual(header[:4], "AB  ")
+        self.assertEqual(header[6:], "CD   ")
+
+    def test_plain_header_is_not_padded_on_the_last_cell(self):
+        text = render_table(["AB", "CD"], [["1234", "xxxxx"]], palette=Palette(False))
+        header = text.splitlines()[0]
+        self.assertEqual(header, "AB    CD")
+
+    def test_plain_header_falls_back_to_a_rule(self):
+        out = render_message_table([make()], palette=Palette(False))
+        self.assertNotIn("\x1b[", out)
+        self.assertIn("\u2500", out.splitlines()[1])
+
+    def test_row_count_is_the_same_either_way(self):
+        plain = render_message_table([make()], palette=Palette(False)).splitlines()
+        styled = render_message_table([make()], palette=Palette(True)).splitlines()
+        self.assertEqual(len(plain), len(styled) + 1)
 
     def test_relative_time_by_default(self):
         message = make()
