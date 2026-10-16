@@ -19,6 +19,10 @@ DEFAULT_PROGRAM = "notify-send"
 #: How long a single notification may take before we give up on it.
 SEND_TIMEOUT = 10.0
 
+#: App icon for the notification: a name looked up in the icon theme, not a
+#: path. Purely cosmetic, so any theme icon will do.
+APP_ICON = "mail-unread"
+
 #: Action name that a click on the notification body activates. The desktop
 #: spec reserves "default" for exactly that, and notify-send prints the chosen
 #: action name on stdout, which is how the click reaches us.
@@ -49,7 +53,7 @@ def notification_argv(
     """
 
     app_name = " ".join(part for part in (sender_label(message), message.number) if part)
-    argv = [program, f"--app-name={app_name}"]
+    argv = [program, f"--app-name={app_name}", "-n", APP_ICON]
     if action_label:
         argv += ["--wait", f"--action={DEFAULT_ACTION}={action_label}"]
     argv += ["#" + message.short_id, message.content or ""]

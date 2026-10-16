@@ -15,6 +15,7 @@ from unittest import mock
 from f50_sms import commands, notifier
 from f50_sms.models import Message
 from f50_sms.notifier import (
+    APP_ICON,
     DEFAULT_ACTION,
     clipboard_command,
     copy_to_clipboard,
@@ -77,18 +78,22 @@ class ArgvTests(unittest.TestCase):
         self.assertEqual(argv[0], "notify-send")
         self.assertEqual(argv[1], "--app-name=中国农业银行 10010")
 
+    def test_the_app_icon_is_requested(self):
+        argv = notification_argv(make())
+        self.assertIn("-n", argv)
+        self.assertEqual(argv[argv.index("-n") + 1], APP_ICON)
+
     def test_summary_is_the_id_and_body_is_the_full_text(self):
+        # Indexed from the end so adding flags later does not shift these.
         message = make(content="【示例银行】第一行\n第二行")
         argv = notification_argv(message)
-        self.assertEqual(argv[2], "#" + message.short_id)
-        self.assertIn("第二行", argv[3])
-        self.assertEqual(len(argv), 4)
+        self.assertEqual(argv[-2], "#" + message.short_id)
+        self.assertIn("第二行", argv[-1])
 
     def test_body_is_a_single_argument(self):
         # Nothing goes through a shell, so shell syntax in an SMS stays text.
         argv = notification_argv(make(content="【x】; rm -rf / $(whoami)"))
-        self.assertEqual(len(argv), 4)
-        self.assertIn("rm -rf /", argv[3])
+        self.assertEqual(argv[-1], "【x】; rm -rf / $(whoami)")
 
     def test_program_is_configurable(self):
         argv = notification_argv(make(), program="/usr/bin/dunstify")
